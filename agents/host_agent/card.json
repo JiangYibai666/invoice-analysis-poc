@@ -1,0 +1,11 @@
+{
+    "agent_name": "HostAgent",
+    "description": "User-facing coordination agent for invoice analysis",
+    "skills": [
+        {
+            "skill_id": "invoice_orchestration",
+            "name": "Invoice query orchestration",
+            "description": "Dispatch queries to InvoiceAgent and format results for the user"
+        }
+    ]
+}
