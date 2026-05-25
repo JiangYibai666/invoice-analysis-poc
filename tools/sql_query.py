@@ -29,6 +29,7 @@ _FORBIDDEN = re.compile(
 )
 
 _HAS_LIMIT = re.compile(r"\bLIMIT\s+\d+", re.IGNORECASE)
+_STRIP_LIMIT = re.compile(r"\bLIMIT\s+\d+\b", re.IGNORECASE)
 
 MAX_ROWS = 200
 
@@ -44,12 +45,16 @@ def validate_sql(sql: str) -> str:
 
 
 def execute_safe_sql(sql: str) -> dict:
-    """Validate and execute a SELECT query; return columns, rows, and count."""
+    """Validate and execute a SELECT query; return columns, rows, count, and total_count."""
     sql = validate_sql(sql)
 
     # Enforce a hard row cap when the LLM omits LIMIT.
     if not _HAS_LIMIT.search(sql):
         sql = f"{sql} LIMIT {MAX_ROWS}"
+
+    # Build a COUNT(*) wrapper to get the true total regardless of LIMIT.
+    sql_no_limit = _STRIP_LIMIT.sub("", sql).strip().rstrip(";")
+    count_sql = f"SELECT COUNT(*) AS total FROM ({sql_no_limit}) AS _count_subq"
 
     def _serialize(val: Any) -> Any:
         if isinstance(val, datetime):
@@ -62,6 +67,9 @@ def execute_safe_sql(sql: str) -> dict:
     conn.set_session(readonly=True, autocommit=True)
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(count_sql)
+            total_count: int = cur.fetchone()["total"]
+
             cur.execute(sql)
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description] if cur.description else []
@@ -72,4 +80,5 @@ def execute_safe_sql(sql: str) -> dict:
         "columns": columns,
         "rows": [{k: _serialize(v) for k, v in row.items()} for row in rows],
         "count": len(rows),
+        "total_count": total_count,
     }

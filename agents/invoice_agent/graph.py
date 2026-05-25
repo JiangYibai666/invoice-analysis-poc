@@ -83,13 +83,21 @@ def _summarize_results(
 ) -> str:
     """Ask Gemini to produce a plain-English answer from the query results."""
     rows_preview = result["rows"][:20]
+    shown = result["count"]
+    total = result["total_count"]
+    count_note = (
+        f"{shown} rows shown (limited by query)"
+        if total > shown
+        else f"{shown} rows"
+    )
     prompt = (
         f"{SUMMARY_SYSTEM_PROMPT}\n\n"
         f"User question: {question}\n\n"
         f"SQL executed:\n{sql}\n\n"
-        f"Query results ({result['count']} rows returned):\n"
+        f"Query results ({count_note}; TRUE TOTAL matching rows = {total}):\n"
         f"{json.dumps(rows_preview, indent=2, default=str)}\n\n"
-        "Write a concise, plain-text answer. Include key figures and names. "
+        "Write a concise answer. Use the TRUE TOTAL figure when describing how many "
+        "records match. Include key figures and names. "
         'End with a single sentence starting "In summary:".'
     )
     return _generate_content(client, prompt)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 from rich.console import Console
 from rich.panel import Panel
@@ -11,6 +12,64 @@ from a2a.client import A2AClient
 from a2a.types import Message, TaskRequest, TaskState, TextPart
 
 console = Console()
+
+
+def _render_summary(text: str, title: str) -> None:
+    """Display the summary Panel and, if the LLM included a markdown table, render it."""
+    # Split out any embedded markdown table block.
+    # A table block is one or more consecutive lines that start with '|'.
+    table_re = re.compile(r"(\n?(?:\|[^\n]+\|\n?)+)", re.MULTILINE)
+    match = table_re.search(text)
+
+    if match:
+        before_table = text[: match.start()].strip()
+
+        # Everything up to and including "In summary:" goes in the Panel.
+        # Any lines after "In summary:" (the table intro) are printed between
+        # the Panel and the table.
+        lines = before_table.splitlines()
+        panel_lines: list[str] = []
+        intro_lines: list[str] = []
+        past_summary = False
+        for line in lines:
+            if not past_summary:
+                panel_lines.append(line)
+                if line.strip().lower().startswith("in summary:"):
+                    past_summary = True
+            else:
+                intro_lines.append(line)
+
+        console.print(Panel.fit("\n".join(panel_lines).strip() or " ", title=title))
+        intro = "\n".join(intro_lines).strip()
+        if intro:
+            console.print(f"\n{intro}")
+        _render_markdown_table(match.group(1).strip())
+    else:
+        console.print(Panel.fit(text, title=title))
+
+
+def _render_markdown_table(md: str) -> None:
+    """Parse a GitHub-flavoured markdown table string and render it with rich."""
+    lines = [ln.strip() for ln in md.splitlines() if ln.strip()]
+    # Filter out the separator row (e.g. |---|---|)
+    data_lines = [ln for ln in lines if not re.match(r"^\|[-| :]+\|$", ln)]
+    if not data_lines:
+        return
+
+    def _parse_row(line: str) -> list[str]:
+        return [cell.strip() for cell in line.strip("|").split("|")]
+
+    headers = _parse_row(data_lines[0])
+    tbl = Table(show_lines=True)
+    for h in headers:
+        tbl.add_column(h)
+    for row_line in data_lines[1:]:
+        cells = _parse_row(row_line)
+        # Pad or truncate to match header count
+        cells = (cells + [""] * len(headers))[: len(headers)]
+        tbl.add_row(*cells)
+    console.print(tbl)
+
 
 _HELP = """
 Available queries (natural language):
@@ -29,7 +88,8 @@ def _render_report(report: dict) -> None:
     summary = report.get("summary", "")
     raw = report.get("raw_data", {})
 
-    console.print(Panel.fit(summary, title=f"[bold cyan]Invoice Analysis — {qtype}[/bold cyan]"))
+    title = f"[bold cyan]Invoice Analysis — {qtype}[/bold cyan]"
+    _render_summary(summary, title)
 
     if qtype == "long_pending_invoices":
         invoices = raw.get("invoices", [])
