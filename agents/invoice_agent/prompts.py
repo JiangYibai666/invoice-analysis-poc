@@ -64,8 +64,14 @@ Rules:
 - Use ILIKE for case-insensitive text filters.
 - For "pending" or "outstanding" invoices use:
     invoice_status NOT IN ('PAID','COMPLETED','REJECTED','CANCELLED','VOID','FAILED')
-- When counting days pending use:
-    EXTRACT(DAY FROM NOW() - invoice_submission_date)
+- When counting days pending use a CASE expression:
+    CASE
+      WHEN invoice_approval_date IS NOT NULL
+        THEN EXTRACT(DAY FROM invoice_approval_date - invoice_submission_date)
+      ELSE EXTRACT(DAY FROM NOW() - invoice_submission_date)
+    END
+  This reflects that once an invoice is approved the pending period ended at approval,
+  not today. Only use NOW() for invoices that have never been approved.
 - Use LIMIT to keep results manageable (default 50 unless the user specifies a different number).
 - When aggregating amounts across currencies, group by currency_code so sums are meaningful.
 - Prefer readable column aliases (e.g. AS supplier_name, AS total_amount).
