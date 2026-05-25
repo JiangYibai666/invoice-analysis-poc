@@ -93,9 +93,19 @@ def query_long_pending_invoices(days_threshold: int = 30, limit: int = 50) -> di
         LIMIT %s
     """
 
+    count_sql = """
+        SELECT COUNT(*) AS total
+        FROM public.invoice i
+        WHERE i.invoice_status NOT IN %s
+          AND i.invoice_submission_date IS NOT NULL
+          AND i.invoice_submission_date < NOW() - (INTERVAL '1 day' * %s)
+    """
+
     conn = _connect()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(count_sql, (_TERMINAL_STATUSES, days_threshold))
+            total_count = cur.fetchone()["total"]
             cur.execute(sql, (_TERMINAL_STATUSES, days_threshold, limit))
             rows = cur.fetchall()
     finally:
@@ -105,10 +115,11 @@ def query_long_pending_invoices(days_threshold: int = 30, limit: int = 50) -> di
     return {
         "query_type": "long_pending_invoices",
         "threshold_days": days_threshold,
-        "count": len(invoices),
+        "count": total_count,
+        "shown": len(invoices),
         "invoices": invoices,
         "summary": (
-            f"Found {len(invoices)} invoice(s) that have been pending for more than "
+            f"Found {total_count} invoice(s) that have been pending for more than "
             f"{days_threshold} day(s)."
         ),
     }

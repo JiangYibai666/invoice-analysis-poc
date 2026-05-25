@@ -41,7 +41,7 @@ def _render_report(report: dict) -> None:
             tbl.add_column("Status")
             tbl.add_column("Amount", justify="right")
             tbl.add_column("Currency")
-            for inv in invoices[:20]:
+            for inv in invoices:
                 tbl.add_row(
                     str(inv.get("invoice_no") or ""),
                     str(inv.get("supplier_name") or ""),
@@ -51,6 +51,9 @@ def _render_report(report: dict) -> None:
                     str(inv.get("currency_code") or ""),
                 )
             console.print(tbl)
+            total_count = raw.get("count", len(invoices))
+            if total_count > len(invoices):
+                console.print(f"[dim]Showing {len(invoices)} of {total_count} matching invoices.[/dim]")
 
     elif qtype == "supplier_frequency":
         suppliers = raw.get("suppliers", [])
@@ -104,6 +107,12 @@ def _render_report(report: dict) -> None:
             sub = raw_data.get(sub_key)
             if sub:
                 _render_report({"query_type": sub.get("query_type"), "summary": sub.get("summary", ""), "raw_data": sub})
+
+    elif qtype == "llm_query":
+        pass
+
+    elif qtype == "error":
+        console.print(f"[bold red]Error:[/bold red] {raw.get('error', 'Unknown error')}")
 
 
 async def ask_once(query: str) -> None:

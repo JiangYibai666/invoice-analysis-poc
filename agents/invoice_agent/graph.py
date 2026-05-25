@@ -1,70 +1,98 @@
 from __future__ import annotations
 
-"""InvoiceAgent graph: parses user intent then calls the appropriate invoice query tool."""
+"""InvoiceAgent graph: uses Google Gemini for text-to-SQL and result summarization."""
 
+import json
+import os
 import re
 
+from google import genai
+from google.genai import errors as genai_errors
+
 from a2a.types import Artifact, DataPart, Message
-from tools.invoice_query import (
-    query_long_pending_invoices,
-    query_supplier_amount,
-    query_supplier_frequency,
-)
+from agents.invoice_agent.prompts import SCHEMA_CONTEXT, SQL_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT
+from tools.sql_query import execute_safe_sql
 
 # ---------------------------------------------------------------------------
-# Intent helpers
+# Gemini helpers
 # ---------------------------------------------------------------------------
 
-_PENDING_KEYWORDS = {
-    "pending", "overdue", "long", "waiting", "unpaid", "outstanding",
-    "old", "stuck", "delayed", "unsettled", "unresolved",
-}
-_FREQUENCY_KEYWORDS = {
-    "frequent", "frequency", "most invoice", "how many invoice", "often",
-    "count", "submitted", "issued", "number of invoice", "invoice count",
-}
-_AMOUNT_KEYWORDS = {
-    "amount", "highest", "lowest", "total", "value", "largest", "biggest",
-    "smallest", "expensive", "cheap", "high", "low", "cost", "price",
-    "minimum", "maximum",
-}
+def _get_client() -> genai.Client:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY environment variable is not set. "
+            "Add it to your .env file."
+        )
+    return genai.Client(api_key=api_key)
 
 
-def _detect_intent(query: str) -> str:
-    q = query.lower()
-    if any(kw in q for kw in _PENDING_KEYWORDS):
-        return "long_pending"
-    if any(kw in q for kw in _FREQUENCY_KEYWORDS):
-        return "supplier_frequency"
-    if any(kw in q for kw in _AMOUNT_KEYWORDS):
-        return "supplier_amount"
-    return "all"
+# Models tried in order when a transient/availability error occurs.
+_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-1.5-flash",
+]
+
+# HTTP status codes that warrant trying the next model.
+_RETRYABLE_CODES = {404, 429, 500, 503}
 
 
-def _extract_days(query: str) -> int:
-    q = query.lower()
-    m = re.search(r"(\d+)\s*day", q)
-    if m:
-        return int(m.group(1))
-    m = re.search(r"(\d+)\s*week", q)
-    if m:
-        return int(m.group(1)) * 7
-    m = re.search(r"(\d+)\s*month", q)
-    if m:
-        return int(m.group(1)) * 30
-    return 30  # default
+def _is_retryable(exc: Exception) -> bool:
+    if isinstance(exc, genai_errors.APIError):
+        return exc.code in _RETRYABLE_CODES
+    msg = str(exc)
+    return any(str(c) in msg for c in _RETRYABLE_CODES)
 
 
-def _extract_top_n(query: str) -> int:
-    m = re.search(r"top\s*(\d+)", query.lower())
-    return int(m.group(1)) if m else 10
+def _generate_content(client: genai.Client, prompt: str) -> str:
+    """Try each model in _MODELS; return text from the first one that responds."""
+    last_exc: Exception | None = None
+    for model in _MODELS:
+        try:
+            response = client.models.generate_content(model=model, contents=prompt)
+            return response.text.strip()
+        except Exception as exc:  # noqa: BLE001
+            if _is_retryable(exc):
+                last_exc = exc
+                continue
+            raise
+    raise RuntimeError(f"All models unavailable. Last error: {last_exc}") from last_exc
 
 
-def _extract_order(query: str) -> str:
-    q = query.lower()
-    if any(w in q for w in ("lowest", "least", "smallest", "minimum", "cheapest")):
-        return "asc"
-    return "desc"
+def _generate_sql(client: genai.Client, question: str) -> str:
+    """Ask Gemini to produce a safe SELECT query for the given question."""
+    prompt = (
+        f"{SQL_SYSTEM_PROMPT}\n\n"
+        f"Database schema:\n{SCHEMA_CONTEXT}\n\n"
+        f"User question: {question}\n\n"
+        "Return ONLY the SQL statement. No explanation, no markdown, no code fences."
+    )
+    sql = _generate_content(client, prompt)
+    # Strip markdown code fences in case Gemini wraps the SQL anyway.
+    sql = re.sub(r"^```(?:sql)?\s*\n?", "", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\n?```\s*$", "", sql)
+    return sql.strip()
+
+
+def _summarize_results(
+    client: genai.Client,
+    question: str,
+    sql: str,
+    result: dict,
+) -> str:
+    """Ask Gemini to produce a plain-English answer from the query results."""
+    rows_preview = result["rows"][:20]
+    prompt = (
+        f"{SUMMARY_SYSTEM_PROMPT}\n\n"
+        f"User question: {question}\n\n"
+        f"SQL executed:\n{sql}\n\n"
+        f"Query results ({result['count']} rows returned):\n"
+        f"{json.dumps(rows_preview, indent=2, default=str)}\n\n"
+        "Write a concise, plain-text answer. Include key figures and names. "
+        'End with a single sentence starting "In summary:".'
+    )
+    return _generate_content(client, prompt)
 
 
 # ---------------------------------------------------------------------------
@@ -76,35 +104,35 @@ def run_invoice_graph(message: Message) -> Artifact:
         part.text for part in message.parts if getattr(part, "type", "") == "text"
     )
 
-    intent = _detect_intent(query_text)
+    try:
+        client = _get_client()
 
-    if intent == "long_pending":
-        days = _extract_days(query_text)
-        result = query_long_pending_invoices(days_threshold=days)
+        # Step 1: natural language → SQL
+        sql = _generate_sql(client, query_text)
 
-    elif intent == "supplier_frequency":
-        top_n = _extract_top_n(query_text)
-        result = query_supplier_frequency(top_n=top_n)
+        # Step 2: execute the SQL safely against the read-only DB
+        result = execute_safe_sql(sql)
 
-    elif intent == "supplier_amount":
-        top_n = _extract_top_n(query_text)
-        order = _extract_order(query_text)
-        result = query_supplier_amount(top_n=top_n, order=order)
+        # Step 3: SQL results → natural language answer
+        summary = _summarize_results(client, query_text, sql, result)
 
-    else:
-        # "all" — run every analysis with sensible defaults and combine
-        pending = query_long_pending_invoices(days_threshold=30)
-        frequency = query_supplier_frequency(top_n=10)
-        amount_high = query_supplier_amount(top_n=10, order="desc")
-        result = {
-            "query_type": "all",
-            "long_pending_invoices": pending,
-            "supplier_frequency": frequency,
-            "supplier_amount_highest": amount_high,
-            "summary": (
-                "Full invoice analysis: long-pending invoices, "
-                "supplier frequency and supplier amount rankings."
-            ),
+        data = {
+            "query_type": "llm_query",
+            "query": query_text,
+            "sql": sql,
+            "columns": result["columns"],
+            "rows": result["rows"],
+            "count": result["count"],
+            "summary": summary,
         }
 
-    return Artifact(name="invoice_analysis", parts=[DataPart(data=result)])
+    except Exception as exc:  # noqa: BLE001
+        data = {
+            "query_type": "error",
+            "query": query_text,
+            "error": str(exc),
+            "summary": f"Could not answer the question: {exc}",
+        }
+
+    return Artifact(name="invoice_analysis", parts=[DataPart(data=data)])
+

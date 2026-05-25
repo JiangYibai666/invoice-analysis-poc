@@ -23,6 +23,7 @@ def _build_summary(data: dict) -> str:
 
     if qtype == "long_pending_invoices":
         count = data.get("count", 0)
+        shown = data.get("shown", count)
         threshold = data.get("threshold_days", "?")
         lines = [
             f"Found {count} invoice(s) pending for more than {threshold} days.\n"
@@ -38,24 +39,39 @@ def _build_summary(data: dict) -> str:
                 f"  • {inv.get('invoice_no', 'N/A')} | {supplier} | "
                 f"{days} days | {status} | {amt_str}"
             )
-        if count > 10:
-            lines.append(f"  ... and {count - 10} more.")
+        remaining = count - 10
+        if remaining > 0:
+            lines.append(f"  ... and {remaining} more.")
+        if count == 0:
+            conclusion = f"\nIn summary: No invoices have been pending for more than {threshold} days."
+        else:
+            conclusion = f"\nIn summary: There are {count} invoice(s) overdue by more than {threshold} days that require attention."
+        lines.append(conclusion)
         return "\n".join(lines)
 
     if qtype == "supplier_frequency":
         top_n = data.get("top_n", "?")
+        suppliers = data.get("suppliers", [])
         lines = [f"Top {top_n} suppliers by invoice count:\n"]
-        for i, s in enumerate(data.get("suppliers", []), 1):
+        for i, s in enumerate(suppliers, 1):
             name = s.get("supplier_name", "Unknown")
             cnt = s.get("invoice_count", 0)
             lines.append(f"  {i:2}. {name} — {cnt} invoice(s)")
+        if suppliers:
+            top = suppliers[0]
+            conclusion = (
+                f"\nIn summary: {top.get('supplier_name', 'Unknown')} is the most frequent submitter "
+                f"with {top.get('invoice_count', 0)} invoice(s)."
+            )
+            lines.append(conclusion)
         return "\n".join(lines)
 
     if qtype == "supplier_amount":
         order = data.get("order", "highest")
         top_n = data.get("top_n", "?")
+        suppliers = data.get("suppliers", [])
         lines = [f"Top {top_n} suppliers by {order} total invoice amount:\n"]
-        for i, s in enumerate(data.get("suppliers", []), 1):
+        for i, s in enumerate(suppliers, 1):
             name = s.get("supplier_name", "Unknown")
             total = s.get("total_amount")
             avg = s.get("avg_amount")
@@ -65,6 +81,33 @@ def _build_summary(data: dict) -> str:
             lines.append(
                 f"  {i:2}. {name} — total: {total_str}, avg: {avg_str}"
             )
+        # Natural-language summary sentence
+        if suppliers:
+            def _fmt_short(s: dict) -> str:
+                total = s.get("total_amount")
+                currency = s.get("currency", "")
+                if total is None:
+                    return s.get("supplier_name", "Unknown")
+                val = float(total)
+                if val >= 1_000_000_000:
+                    short = f"{val / 1_000_000_000:.1f}B"
+                elif val >= 1_000_000:
+                    short = f"{val / 1_000_000:.1f}M"
+                else:
+                    short = f"{val:,.0f}"
+                return f"{s.get('supplier_name', 'Unknown')} ({currency} {short})"
+            named = [_fmt_short(s) for s in suppliers[:3]]
+            if len(named) == 1:
+                conclusion = f"In summary: {named[0]} has the {order} invoice amount."
+            elif len(named) == 2:
+                conclusion = f"In summary: {named[0]} leads, followed by {named[1]}."
+            else:
+                conclusion = (
+                    f"In summary: {named[0]} leads, followed by "
+                    + ", ".join(named[1:-1])
+                    + f", and {named[-1]}."
+                )
+            lines.append(f"\n{conclusion}")
         return "\n".join(lines)
 
     if qtype == "all":
