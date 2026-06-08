@@ -1,0 +1,11 @@
+{
+    "agent_name": "DeliveryOrderAgent",
+    "description": "Checks invoice-to-delivery-order matching by invoice number",
+    "skills": [
+        {
+            "skill_id": "invoice_do_matching",
+            "name": "Invoice to DO matching",
+            "description": "Verify whether invoice item quantities are covered by linked delivery order lines"
+        }
+    ]
+}

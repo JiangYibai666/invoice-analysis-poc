@@ -1,0 +1,11 @@
+{
+    "agent_name": "PurchaseOrderAgent",
+    "description": "Checks invoice-to-purchase-order matching by invoice number",
+    "skills": [
+        {
+            "skill_id": "invoice_po_matching",
+            "name": "Invoice to PO matching",
+            "description": "Verify whether invoice line quantities, unit prices, and amounts match linked purchase order lines"
+        }
+    ]
+}

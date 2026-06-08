@@ -168,6 +168,54 @@ def _render_report(report: dict) -> None:
             if sub:
                 _render_report({"query_type": sub.get("query_type"), "summary": sub.get("summary", ""), "raw_data": sub})
 
+    elif qtype == "document_matching":
+        po_match = raw.get("po_match", {})
+        do_match = raw.get("do_match", {})
+
+        po_lines = po_match.get("lines", [])
+        if po_lines:
+            tbl = Table(title="Invoice to PO Matching", show_lines=True)
+            tbl.add_column("Invoice Item", justify="right", style="cyan")
+            tbl.add_column("Item")
+            tbl.add_column("PO No")
+            tbl.add_column("Inv Net", justify="right")
+            tbl.add_column("PO Net", justify="right")
+            tbl.add_column("Variance", justify="right")
+            tbl.add_column("Match")
+            for line in po_lines[:20]:
+                tbl.add_row(
+                    str(line.get("invoice_item_id") or ""),
+                    str(line.get("item_name") or line.get("item_code") or ""),
+                    str(line.get("po_number") or line.get("invoice_item_po_number") or ""),
+                    f"{float(line['invoice_net_price']):,.2f}" if line.get("invoice_net_price") is not None else "",
+                    f"{float(line['matched_po_net_price']):,.2f}" if line.get("matched_po_net_price") is not None else "",
+                    f"{float(line['net_amount_variance']):,.2f}" if line.get("net_amount_variance") is not None else "",
+                    "yes" if line.get("net_amount_match") is True else "no",
+                )
+            console.print(tbl)
+
+        do_lines = do_match.get("lines", [])
+        if do_lines:
+            tbl = Table(title="Invoice to DO Matching", show_lines=True)
+            tbl.add_column("Invoice Item", justify="right", style="cyan")
+            tbl.add_column("Item")
+            tbl.add_column("DO No")
+            tbl.add_column("Inv Qty", justify="right")
+            tbl.add_column("DO Qty", justify="right")
+            tbl.add_column("Variance", justify="right")
+            tbl.add_column("Covered")
+            for line in do_lines[:20]:
+                tbl.add_row(
+                    str(line.get("invoice_item_id") or ""),
+                    str(line.get("item_name") or line.get("item_code") or ""),
+                    str(line.get("delivery_order_number") or line.get("invoice_item_do_number") or ""),
+                    f"{float(line['invoice_qty']):,.4f}" if line.get("invoice_qty") is not None else "",
+                    f"{float(line['matched_do_quantity']):,.4f}" if line.get("matched_do_quantity") is not None else "",
+                    f"{float(line['quantity_variance']):,.4f}" if line.get("quantity_variance") is not None else "",
+                    "yes" if line.get("quantity_covered") is True else "no",
+                )
+            console.print(tbl)
+
     elif qtype == "llm_query":
         pass
 

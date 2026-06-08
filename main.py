@@ -38,8 +38,10 @@ def main() -> None:
     configs = [
         ("agents.host_agent.server:app", 10000),
         ("agents.invoice_agent.server:app", 10001),
+        ("agents.purchase_order_agent.server:app", 10002),
+        ("agents.delivery_order_agent.server:app", 10003),
     ]
-    labels = ["HostAgent", "InvoiceAgent"]
+    labels = ["HostAgent", "InvoiceAgent", "PurchaseOrderAgent", "DeliveryOrderAgent"]
 
     blocked = [
         (label, port)

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import re
 from collections.abc import AsyncIterator
 from typing import Optional
 
 from a2a.client import A2AClient
 from a2a.types import Artifact, DataPart, Message, TaskEvent, TaskRequest, TaskState, TextPart
 from storage.task_store import create_session, finalize_session
+from tools.document_match_query import extract_invoice_no
 
 
 def _extract_data(artifact: Optional[Artifact]) -> dict:
@@ -20,6 +23,30 @@ def _extract_data(artifact: Optional[Artifact]) -> dict:
 def _build_summary(data: dict) -> str:
     """Produce a concise human-readable summary from InvoiceAgent's result."""
     qtype = data.get("query_type", "unknown")
+
+    if qtype == "document_matching":
+        invoice_no = data.get("invoice_no") or "the requested invoice"
+        po_match = data.get("po_match", {})
+        do_match = data.get("do_match", {})
+        lines = [f"Document matching result for invoice {invoice_no}:\n"]
+
+        if po_match:
+            lines.append(f"PO check: {po_match.get('summary', 'No PO result available.')}")
+        if do_match:
+            lines.append(f"DO check: {do_match.get('summary', 'No DO result available.')}")
+
+        po_ok = po_match.get("matched") is True
+        do_ok = do_match.get("matched") is True
+        if po_ok and do_ok:
+            conclusion = "In summary: Two-way and three-way document matching passed for this invoice."
+        elif po_ok:
+            conclusion = "In summary: Invoice-to-PO matching passed, but Invoice-to-DO matching needs review."
+        elif do_ok:
+            conclusion = "In summary: Invoice-to-DO matching passed, but Invoice-to-PO matching needs review."
+        else:
+            conclusion = "In summary: Document matching needs review before this invoice is treated as matched."
+        lines.append(f"\n{conclusion}")
+        return "\n".join(lines)
 
     if qtype == "long_pending_invoices":
         count = data.get("count", 0)
@@ -123,6 +150,47 @@ def _build_summary(data: dict) -> str:
     return data.get("summary", "No summary available.")
 
 
+def _is_document_matching_query(query: str) -> bool:
+    lowered = query.lower()
+    keywords = (
+        "match",
+        "matching",
+        "matched",
+        "two-way",
+        "three-way",
+        "2-way",
+        "3-way",
+        "purchase order",
+        "delivery order",
+        "匹配",
+        "双向",
+        "三向",
+        "采购订单",
+        "交货单",
+    )
+    has_keyword = (
+        any(keyword in lowered for keyword in keywords)
+        or re.search(r"\b(?:po|do)\b", lowered) is not None
+    )
+    return extract_invoice_no(query) is not None and has_keyword
+
+
+async def _send_to_agent(
+    client: A2AClient,
+    session_id: str,
+    query: str,
+    target_agent: str,
+) -> dict:
+    req = TaskRequest(
+        session_id=session_id,
+        source_agent="HostAgent",
+        target_agent=target_agent,
+        message=Message(role="user", parts=[TextPart(text=query)]),
+    )
+    resp = await client.send(req)
+    return _extract_data(resp.artifact)
+
+
 async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
     query = " ".join(
         part.text for part in task_request.message.parts
@@ -133,19 +201,38 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
     yield TaskEvent(
         task_id=task_request.task_id,
         state=TaskState.WORKING,
-        message="HostAgent: dispatching to InvoiceAgent",
+        message="HostAgent: routing request",
     )
 
     client = A2AClient()
     try:
-        inv_req = TaskRequest(
-            session_id=task_request.session_id,
-            source_agent="HostAgent",
-            target_agent="InvoiceAgent",
-            message=Message(role="user", parts=[TextPart(text=query)]),
-        )
-        inv_resp = await client.send(inv_req)
-        invoice_data = _extract_data(inv_resp.artifact)
+        if _is_document_matching_query(query):
+            yield TaskEvent(
+                task_id=task_request.task_id,
+                state=TaskState.WORKING,
+                message="HostAgent: dispatching to PurchaseOrderAgent and DeliveryOrderAgent",
+            )
+
+            po_data, do_data = await asyncio.gather(
+                _send_to_agent(client, task_request.session_id, query, "PurchaseOrderAgent"),
+                _send_to_agent(client, task_request.session_id, query, "DeliveryOrderAgent"),
+            )
+            invoice_data = {
+                "query_type": "document_matching",
+                "query": query,
+                "invoice_no": po_data.get("invoice_no") or do_data.get("invoice_no") or extract_invoice_no(query),
+                "po_match": po_data,
+                "do_match": do_data,
+            }
+        else:
+            inv_req = TaskRequest(
+                session_id=task_request.session_id,
+                source_agent="HostAgent",
+                target_agent="InvoiceAgent",
+                message=Message(role="user", parts=[TextPart(text=query)]),
+            )
+            inv_resp = await client.send(inv_req)
+            invoice_data = _extract_data(inv_resp.artifact)
 
         yield TaskEvent(
             task_id=task_request.task_id,

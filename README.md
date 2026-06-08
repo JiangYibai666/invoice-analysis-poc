@@ -1,42 +1,54 @@
 # Invoice Analysis POC
 
-A multi-agent invoice analysis system built on the A2A (Agent-to-Agent) protocol,
-querying a live **PostgreSQL** database (`invoices_uat`) to answer questions about
-supplier invoicing behaviour.
+A multi-agent invoice analytics proof of concept for querying a live
+**PostgreSQL** database (`invoices_uat`) with natural-language questions.
+
+The current version uses Google Gemini to translate user questions into safe
+read-only SQL, executes the query against invoice data, and summarizes the
+results for business users.
 
 ## Architecture
 
-```
+```text
 CLI
  └─► HostAgent  (port 10000)
-       └─► InvoiceAgent  (port 10001)
-             └─► invoices_uat  (PostgreSQL, read-only)
+       ├─► InvoiceAgent        (port 10001)
+       │     ├─► Gemini  (natural language -> SQL, result summary)
+       │     └─► invoices_uat  (PostgreSQL, read-only)
+       ├─► PurchaseOrderAgent  (port 10002)
+       │     └─► invoices_uat  (Invoice ↔ PO matching)
+       └─► DeliveryOrderAgent  (port 10003)
+             └─► invoices_uat  (Invoice ↔ DO matching)
+
+Task/session store
+ └─► postgres database  (read-write)
 ```
 
-| Component        | Role                                                                                    |
-| ---------------- | --------------------------------------------------------------------------------------- |
-| **HostAgent**    | Receives user queries, delegates to InvoiceAgent, formats the final report              |
-| **InvoiceAgent** | Detects query intent, executes SQL against `invoices_uat`, returns structured data      |
-| **Task store**   | Session & task tracking written to the `postgres` database (separate from invoice data) |
-
----
+| Component        | Role                                                                 |
+| ---------------- | -------------------------------------------------------------------- |
+| **CLI**          | Interactive terminal interface for user questions and rich output    |
+| **HostAgent**    | Receives user queries, delegates to InvoiceAgent, stores final report |
+| **InvoiceAgent** | Generates SQL with Gemini, executes safe SQL, summarizes results      |
+| **PurchaseOrderAgent** | Checks whether invoice lines match linked PO lines             |
+| **DeliveryOrderAgent** | Checks whether invoice quantities are covered by linked DO lines |
+| **SQL tool**     | Validates model-generated SQL and runs read-only PostgreSQL queries   |
+| **Task store**   | Persists sessions, tasks, messages, and artifacts for traceability    |
 
 ## Prerequisites
 
 - Python 3.11+
 - PostgreSQL running on `localhost:5432` with:
-  - `invoices_uat` database (invoice data, read-only access required)
-  - `postgres` database (task/session store, read-write access required)
-  - User `postgres` / password `postgres` (or update `.env`)
-
----
+  - `invoices_uat` database for invoice data, read-only access required
+  - `postgres` database for task/session storage, read-write access required
+  - User `postgres` / password `postgres`, or matching values in `.env`
+- Google Gemini API key in `GEMINI_API_KEY`
 
 ## Setup
 
-### 1. Clone / open the project
+### 1. Open the project
 
 ```bash
-cd C:\Workspace\GitHub\invoice-analysis-poc
+cd /path/to/invoice-analysis-poc
 ```
 
 ### 2. Install dependencies
@@ -47,7 +59,7 @@ pip install -r requirements.txt
 
 ### 3. Configure environment
 
-Copy `.env.example` to `.env` (already done if you ran the setup) and edit as needed:
+Copy `.env.example` to `.env` and edit as needed:
 
 ```ini
 # Invoice data source
@@ -57,12 +69,28 @@ INVOICE_DB_USER=postgres
 INVOICE_DB_PASSWORD=postgres
 INVOICE_DB_NAME=invoices_uat
 
+# Purchase/PO/DO data source
+PURCHASE_DB_HOST=localhost
+PURCHASE_DB_PORT=5432
+PURCHASE_DB_USER=postgres
+PURCHASE_DB_PASSWORD=postgres
+PURCHASE_DB_NAME=purchase
+
 # Task/session store
 TASK_DB_HOST=localhost
 TASK_DB_PORT=5432
 TASK_DB_USER=postgres
 TASK_DB_PASSWORD=postgres
 TASK_DB_NAME=postgres
+
+# Required for LLM-powered SQL generation and summarization
+GEMINI_API_KEY=your-gemini-api-key-here
+
+# Agent URLs
+HOST_AGENT_URL=http://127.0.0.1:10000
+INVOICE_AGENT_URL=http://127.0.0.1:10001
+PURCHASE_ORDER_AGENT_URL=http://127.0.0.1:10002
+DELIVERY_ORDER_AGENT_URL=http://127.0.0.1:10003
 ```
 
 ### 4. Run
@@ -72,135 +100,178 @@ python main.py
 ```
 
 On startup the application will:
-1. Initialise the task/session tables in the `postgres` database (safe to run multiple times — uses `CREATE TABLE IF NOT EXISTS`).
-2. Start **HostAgent** on `http://localhost:10000`.
-3. Start **InvoiceAgent** on `http://localhost:10001`.
-4. Open the interactive CLI.
 
----
+1. Load `.env`.
+2. Initialise the task/session tables in the `postgres` database.
+3. Start **HostAgent** on `http://127.0.0.1:10000`.
+4. Start **InvoiceAgent** on `http://127.0.0.1:10001`.
+5. Start **PurchaseOrderAgent** on `http://127.0.0.1:10002`.
+6. Start **DeliveryOrderAgent** on `http://127.0.0.1:10003`.
+7. Open the interactive CLI.
 
 ## Using the CLI
 
 Type a natural-language question at the `>` prompt.
 
-### Supported query types
+Examples:
 
-#### Long-pending invoices
-Find invoices that have been in a non-terminal status (not paid, not rejected, not cancelled) for longer than a given number of days.
-
-```
+```text
 > Which invoices have been pending for more than 60 days?
-> Show me all outstanding invoices older than 90 days
-> List overdue invoices pending for more than 2 months
-```
-
-Default threshold: **30 days** when no number is specified.
-
-#### Supplier invoicing frequency
-Rank suppliers by how many invoices they have submitted.
-
-```
-> Which suppliers issue the most invoices?
-> Show the top 10 suppliers by invoice count
-> Which supplier submits invoices most frequently?
-```
-
-Default ranking: **top 10** suppliers.
-
-#### Supplier invoicing amount
-Rank suppliers by their total (or average / min / max) invoice amounts.
-
-```
+> Show me the top 10 suppliers by invoice count
 > Which suppliers have the highest invoice amounts?
-> Show me the top 5 suppliers by total invoice value
-> Which suppliers have the lowest invoice amounts?
-```
-
-Use words like **"lowest"**, **"least"**, or **"minimum"** to reverse the sort order.
-Default ranking: **top 10** suppliers, highest first.
-
-#### Full analysis
-When the query does not match a specific type, all three analyses run together.
-
-```
+> Which suppliers have the lowest total invoice amounts?
 > Give me a full invoice analysis
-> Invoice summary
+> Which buyers have the most unpaid invoices?
+> Show overdue invoices by currency
+> Does invoice INV-001 match its PO and DO?
+> Check three-way matching for invoice INV-001
 ```
 
-### CLI commands
+CLI commands:
 
 | Input                 | Action                        |
 | --------------------- | ----------------------------- |
-| `help`                | Show available query examples |
+| `help`                | Show query examples           |
 | `exit` / `quit` / `q` | Exit the application          |
 
----
+## Current Query Flow
 
-## Project structure
+1. The CLI sends the user question to HostAgent through the local A2A HTTP API.
+2. HostAgent creates a session record and forwards the query to InvoiceAgent.
+3. For normal analytics, InvoiceAgent sends the question plus curated schema
+   context to Gemini.
+4. Gemini returns a single PostgreSQL `SELECT` statement.
+5. `tools/sql_query.py` validates the SQL before execution:
+   - statement must start with `SELECT`
+   - DDL/DML/admin keywords are blocked
+   - the database connection is opened in read-only mode
+   - a hard row cap is added when the SQL omits `LIMIT`
+   - a wrapped `COUNT(*)` query is used to calculate the true total
+6. InvoiceAgent sends the SQL result preview back to Gemini for a concise summary.
+7. HostAgent wraps the structured data and summary into a final report.
+8. For invoice document matching questions, HostAgent calls PurchaseOrderAgent
+   and DeliveryOrderAgent instead of the generic text-to-SQL path.
+9. The CLI renders the summary and any markdown table returned by the model or
+   deterministic matching tables returned by the matching agents.
 
-```
+## Project Structure
+
+```text
 invoice-analysis-poc/
-├── main.py                        # Entry point — starts agents and CLI
-├── .env                           # Local environment variables (not committed)
+├── main.py                        # Entry point: starts agents and CLI
 ├── .env.example                   # Template for environment variables
 ├── requirements.txt
 ├── pyproject.toml
+├── database_structure.md          # Full database schema reference
+├── Report.md                      # Project brief and current limitations
 │
-├── a2a/                           # A2A protocol layer
-│   ├── types.py                   # Pydantic models (TaskRequest, Artifact, …)
+├── a2a/                           # Lightweight A2A protocol layer
+│   ├── types.py                   # Pydantic models
 │   ├── client.py                  # HTTP client for agent-to-agent calls
 │   ├── server.py                  # FastAPI router factory
-│   └── registry.py                # Agent endpoint map (reads from .env)
+│   └── registry.py                # Agent endpoint map
 │
 ├── agents/
 │   ├── host_agent/
-│   │   ├── graph.py               # Orchestration logic & report formatting
-│   │   ├── server.py              # FastAPI app (port 10000)
-│   │   ├── prompts.py             # System prompt
+│   │   ├── graph.py               # Orchestration and final report wrapping
+│   │   ├── server.py              # FastAPI app on port 10000
+│   │   ├── prompts.py             # HostAgent prompt reference
 │   │   └── card.json              # Agent capability card
-│   └── invoice_agent/
-│       ├── graph.py               # Intent detection + tool dispatch
-│       ├── server.py              # FastAPI app (port 10001)
-│       ├── prompts.py             # System prompt
+│   ├── invoice_agent/
+│   │   ├── graph.py               # Gemini text-to-SQL and summarization flow
+│   │   ├── prompts.py             # Schema context and Gemini instructions
+│   │   ├── server.py              # FastAPI app on port 10001
+│   │   └── card.json              # Agent capability card
+│   ├── purchase_order_agent/
+│   │   ├── graph.py               # Invoice-to-PO matching flow
+│   │   ├── server.py              # FastAPI app on port 10002
+│   │   ├── prompts.py             # POAgent prompt reference
+│   │   └── card.json              # Agent capability card
+│   └── delivery_order_agent/
+│       ├── graph.py               # Invoice-to-DO matching flow
+│       ├── server.py              # FastAPI app on port 10003
+│       ├── prompts.py             # DOAgent prompt reference
 │       └── card.json              # Agent capability card
 │
 ├── tools/
-│   └── invoice_query.py           # Three SQL query functions against invoices_uat
+│   ├── sql_query.py               # Safe SQL validation and execution
+│   ├── document_match_query.py    # Deterministic Invoice ↔ PO/DO checks
+│   └── invoice_query.py           # Legacy deterministic query helpers
 │
 ├── storage/
 │   ├── schema.sql                 # PostgreSQL DDL for task/session tables
-│   └── task_store.py              # psycopg2-based task/session persistence
+│   └── task_store.py              # psycopg2 task/session persistence
 │
 └── cli/
     └── chat.py                    # Rich interactive terminal UI
 ```
 
----
+## Database Tables Used
 
-## Database tables used
-
-All queries target the **`invoices_uat`** database, **`public`** schema.
+The LLM is given curated schema context for these `invoices_uat.public` tables:
 
 | Table                         | Purpose                                                           |
 | ----------------------------- | ----------------------------------------------------------------- |
-| `public.invoice`              | Core invoice records — status, amounts, dates, supplier/buyer FKs |
-| `public.supplier_information` | Supplier names and codes                                          |
-| `public.buyer_information`    | Buyer company names                                               |
+| `public.invoice`              | Core invoice records: status, amounts, dates, supplier/buyer FKs  |
+| `public.invoice_item`         | Invoice line items and PO/DO reference fields                     |
+| `public.supplier_information` | Supplier names, codes, UUIDs, and country metadata                |
+| `public.buyer_information`    | Buyer names, codes, and UUIDs                                     |
+| `public.purchase_order`       | Purchase order headers, read from `PURCHASE_DB_NAME`              |
+| `public.po_item`              | Purchase order line items, read from `PURCHASE_DB_NAME`           |
+| `public.delivery_order`       | Delivery order headers, read from `PURCHASE_DB_NAME`              |
+| `public.delivery_order_item`  | Delivery order line items, read from `PURCHASE_DB_NAME`           |
 
-The task/session store creates its own tables (prefixed `invoice_poc_`) in the
-**`postgres`** database and does not touch `invoices_uat`.
+The task/session store creates its own `invoice_poc_*` tables in the
+**`postgres`** database and does not write to `invoices_uat`.
 
----
+## Safety Model
 
-## Extending the project
+The invoice database connection is configured as read-only. In addition,
+model-generated SQL is checked before execution:
 
-### Add a new query type
+- only `SELECT` statements are accepted
+- dangerous keywords such as `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`,
+  `CREATE`, `TRUNCATE`, `COPY`, and `VACUUM` are rejected
+- result size is capped at `MAX_ROWS = 200` when no explicit `LIMIT` is present
+- decimal and timestamp values are converted into JSON-serialisable values
 
-1. Add a query function to `tools/invoice_query.py`.
-2. Register a new intent keyword set in `agents/invoice_agent/graph.py` (`_detect_intent`).
-3. Call the function in `run_invoice_graph` and return the result as a `DataPart`.
-4. Add a rendering block to `cli/chat.py` (`_render_report`).
+This is a POC-level guardrail, not a full SQL parser or production policy engine.
+Complex SQL can still expose edge cases in regex-based validation and limit
+rewriting.
+
+## Current Limitations
+
+- SQL quality depends on the schema context and Gemini's interpretation of the
+  business question.
+- Ambiguous business terms or internal abbreviations may produce executable but
+  semantically incorrect SQL unless the schema context is expanded.
+- The README examples are representative; the active query surface is broader
+  because the system uses text-to-SQL rather than a fixed intent list.
+- PO/DO matching is deterministic and currently starts from an invoice number.
+  PO matching checks line quantity, unit price, and line amount. DO matching is
+  quantity-based because delivery order records do not carry invoice amounts in
+  the current schema.
+- `tools/invoice_query.py` contains older deterministic helpers. The current
+  InvoiceAgent path uses `tools/sql_query.py` instead.
+
+## Extending the Project
+
+### Improve query accuracy
+
+1. Add clearer business definitions to `agents/invoice_agent/prompts.py`.
+2. Add table or column context from `database_structure.md` only when it is
+   needed for the target question family.
+3. Add deterministic tests around generated SQL validation and result rendering.
+
+### Add stricter SQL safety
+
+1. Replace regex-only SQL validation with a PostgreSQL-aware parser.
+2. Enforce an allowlist of schemas and tables.
+3. Add statement timeout and row/byte limits at the database level.
+4. Log generated SQL and validation decisions for review.
 
 ### Point to a different database
 
-Update the `INVOICE_DB_*` variables in `.env`. No code changes are required.
+Update the `INVOICE_DB_*` variables in `.env`. If PO/DO tables live in a
+separate database, update `PURCHASE_DB_*` too. If the schema changes, update
+`SCHEMA_CONTEXT` in `agents/invoice_agent/prompts.py` as well.
