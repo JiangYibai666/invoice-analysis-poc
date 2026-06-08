@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from collections.abc import AsyncIterator
 from typing import Optional
 
 from a2a.client import A2AClient
 from a2a.types import Artifact, DataPart, Message, TaskEvent, TaskRequest, TaskState, TextPart
+from agents.host_agent.router import RouteDecision, route_query
 from storage.task_store import create_session, finalize_session
 from tools.document_match_query import extract_invoice_no
 
@@ -35,144 +35,31 @@ def _build_summary(data: dict) -> str:
         if do_match:
             lines.append(f"DO check: {do_match.get('summary', 'No DO result available.')}")
 
-        po_ok = po_match.get("matched") is True
-        do_ok = do_match.get("matched") is True
-        if po_ok and do_ok:
+        po_ok = po_match.get("matched") is True if po_match else None
+        do_ok = do_match.get("matched") is True if do_match else None
+        if po_ok is True and do_ok is True:
             conclusion = "In summary: Two-way and three-way document matching passed for this invoice."
-        elif po_ok:
+        elif po_ok is True and do_ok is None:
+            conclusion = "In summary: Invoice-to-PO matching passed for this invoice."
+        elif do_ok is True and po_ok is None:
+            conclusion = "In summary: Invoice-to-DO matching passed for this invoice."
+        elif po_ok is True:
             conclusion = "In summary: Invoice-to-PO matching passed, but Invoice-to-DO matching needs review."
-        elif do_ok:
+        elif do_ok is True:
             conclusion = "In summary: Invoice-to-DO matching passed, but Invoice-to-PO matching needs review."
         else:
             conclusion = "In summary: Document matching needs review before this invoice is treated as matched."
         lines.append(f"\n{conclusion}")
         return "\n".join(lines)
 
-    if qtype == "long_pending_invoices":
-        count = data.get("count", 0)
-        shown = data.get("shown", count)
-        threshold = data.get("threshold_days", "?")
-        lines = [
-            f"Found {count} invoice(s) pending for more than {threshold} days.\n"
-        ]
-        for inv in data.get("invoices", [])[:10]:
-            supplier = inv.get("supplier_name") or "Unknown supplier"
-            days = inv.get("days_pending", "?")
-            status = inv.get("invoice_status", "?")
-            amount = inv.get("total_amount")
-            currency = inv.get("currency_code", "")
-            amt_str = f"{currency} {float(amount):,.2f}" if amount else "N/A"
-            lines.append(
-                f"  • {inv.get('invoice_no', 'N/A')} | {supplier} | "
-                f"{days} days | {status} | {amt_str}"
-            )
-        remaining = count - 10
-        if remaining > 0:
-            lines.append(f"  ... and {remaining} more.")
-        if count == 0:
-            conclusion = f"\nIn summary: No invoices have been pending for more than {threshold} days."
-        else:
-            conclusion = f"\nIn summary: There are {count} invoice(s) overdue by more than {threshold} days that require attention."
-        lines.append(conclusion)
-        return "\n".join(lines)
-
-    if qtype == "supplier_frequency":
-        top_n = data.get("top_n", "?")
-        suppliers = data.get("suppliers", [])
-        lines = [f"Top {top_n} suppliers by invoice count:\n"]
-        for i, s in enumerate(suppliers, 1):
-            name = s.get("supplier_name", "Unknown")
-            cnt = s.get("invoice_count", 0)
-            lines.append(f"  {i:2}. {name} — {cnt} invoice(s)")
-        if suppliers:
-            top = suppliers[0]
-            conclusion = (
-                f"\nIn summary: {top.get('supplier_name', 'Unknown')} is the most frequent submitter "
-                f"with {top.get('invoice_count', 0)} invoice(s)."
-            )
-            lines.append(conclusion)
-        return "\n".join(lines)
-
-    if qtype == "supplier_amount":
-        order = data.get("order", "highest")
-        top_n = data.get("top_n", "?")
-        suppliers = data.get("suppliers", [])
-        lines = [f"Top {top_n} suppliers by {order} total invoice amount:\n"]
-        for i, s in enumerate(suppliers, 1):
-            name = s.get("supplier_name", "Unknown")
-            total = s.get("total_amount")
-            avg = s.get("avg_amount")
-            currency = s.get("currency", "")
-            total_str = f"{currency} {float(total):,.2f}" if total else "N/A"
-            avg_str = f"{currency} {float(avg):,.2f}" if avg else "N/A"
-            lines.append(
-                f"  {i:2}. {name} — total: {total_str}, avg: {avg_str}"
-            )
-        # Natural-language summary sentence
-        if suppliers:
-            def _fmt_short(s: dict) -> str:
-                total = s.get("total_amount")
-                currency = s.get("currency", "")
-                if total is None:
-                    return s.get("supplier_name", "Unknown")
-                val = float(total)
-                if val >= 1_000_000_000:
-                    short = f"{val / 1_000_000_000:.1f}B"
-                elif val >= 1_000_000:
-                    short = f"{val / 1_000_000:.1f}M"
-                else:
-                    short = f"{val:,.0f}"
-                return f"{s.get('supplier_name', 'Unknown')} ({currency} {short})"
-            named = [_fmt_short(s) for s in suppliers[:3]]
-            if len(named) == 1:
-                conclusion = f"In summary: {named[0]} has the {order} invoice amount."
-            elif len(named) == 2:
-                conclusion = f"In summary: {named[0]} leads, followed by {named[1]}."
-            else:
-                conclusion = (
-                    f"In summary: {named[0]} leads, followed by "
-                    + ", ".join(named[1:-1])
-                    + f", and {named[-1]}."
-                )
-            lines.append(f"\n{conclusion}")
-        return "\n".join(lines)
-
-    if qtype == "all":
+    if qtype == "multi_agent_analysis":
         parts = []
-        if "long_pending_invoices" in data:
-            parts.append(_build_summary(data["long_pending_invoices"]))
-        if "supplier_frequency" in data:
-            parts.append(_build_summary(data["supplier_frequency"]))
-        if "supplier_amount_highest" in data:
-            parts.append(_build_summary(data["supplier_amount_highest"]))
-        return "\n\n".join(parts)
+        for agent_name, agent_data in data.get("agent_results", {}).items():
+            summary = agent_data.get("summary", "No summary available.")
+            parts.append(f"{agent_name}: {summary}")
+        return "\n\n".join(parts) or "No analysis results were returned."
 
     return data.get("summary", "No summary available.")
-
-
-def _is_document_matching_query(query: str) -> bool:
-    lowered = query.lower()
-    keywords = (
-        "match",
-        "matching",
-        "matched",
-        "two-way",
-        "three-way",
-        "2-way",
-        "3-way",
-        "purchase order",
-        "delivery order",
-        "匹配",
-        "双向",
-        "三向",
-        "采购订单",
-        "交货单",
-    )
-    has_keyword = (
-        any(keyword in lowered for keyword in keywords)
-        or re.search(r"\b(?:po|do)\b", lowered) is not None
-    )
-    return extract_invoice_no(query) is not None and has_keyword
 
 
 async def _send_to_agent(
@@ -180,15 +67,62 @@ async def _send_to_agent(
     session_id: str,
     query: str,
     target_agent: str,
+    route: RouteDecision,
 ) -> dict:
     req = TaskRequest(
         session_id=session_id,
         source_agent="HostAgent",
         target_agent=target_agent,
-        message=Message(role="user", parts=[TextPart(text=query)]),
+        message=Message(
+            role="user",
+            parts=[
+                TextPart(text=query),
+                DataPart(
+                    data={
+                        "route_task_type": route["task_type"],
+                        "route_target_agents": route["target_agents"],
+                        "route_reason": route["reason"],
+                    }
+                ),
+            ],
+        ),
     )
     resp = await client.send(req)
     return _extract_data(resp.artifact)
+
+
+async def _dispatch_route(client: A2AClient, session_id: str, query: str, route: RouteDecision) -> dict:
+    target_agents = route["target_agents"]
+    results = await asyncio.gather(
+        *(_send_to_agent(client, session_id, query, agent_name, route) for agent_name in target_agents)
+    )
+    by_agent = dict(zip(target_agents, results))
+
+    if route["task_type"] == "document_matching":
+        return {
+            "query_type": "document_matching",
+            "query": query,
+            "invoice_no": (
+                by_agent.get("PurchaseOrderAgent", {}).get("invoice_no")
+                or by_agent.get("DeliveryOrderAgent", {}).get("invoice_no")
+                or extract_invoice_no(query)
+            ),
+            "po_match": by_agent.get("PurchaseOrderAgent", {}),
+            "do_match": by_agent.get("DeliveryOrderAgent", {}),
+            "route": route,
+        }
+
+    if len(target_agents) == 1:
+        data = results[0]
+        data["route"] = route
+        return data
+
+    return {
+        "query_type": "multi_agent_analysis",
+        "query": query,
+        "agent_results": by_agent,
+        "route": route,
+    }
 
 
 async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
@@ -206,33 +140,16 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
 
     client = A2AClient()
     try:
-        if _is_document_matching_query(query):
-            yield TaskEvent(
-                task_id=task_request.task_id,
-                state=TaskState.WORKING,
-                message="HostAgent: dispatching to PurchaseOrderAgent and DeliveryOrderAgent",
-            )
-
-            po_data, do_data = await asyncio.gather(
-                _send_to_agent(client, task_request.session_id, query, "PurchaseOrderAgent"),
-                _send_to_agent(client, task_request.session_id, query, "DeliveryOrderAgent"),
-            )
-            invoice_data = {
-                "query_type": "document_matching",
-                "query": query,
-                "invoice_no": po_data.get("invoice_no") or do_data.get("invoice_no") or extract_invoice_no(query),
-                "po_match": po_data,
-                "do_match": do_data,
-            }
-        else:
-            inv_req = TaskRequest(
-                session_id=task_request.session_id,
-                source_agent="HostAgent",
-                target_agent="InvoiceAgent",
-                message=Message(role="user", parts=[TextPart(text=query)]),
-            )
-            inv_resp = await client.send(inv_req)
-            invoice_data = _extract_data(inv_resp.artifact)
+        route = route_query(query)
+        yield TaskEvent(
+            task_id=task_request.task_id,
+            state=TaskState.WORKING,
+            message=(
+                "HostAgent: route="
+                f"{route['task_type']} targets={','.join(route['target_agents'])}"
+            ),
+        )
+        invoice_data = await _dispatch_route(client, task_request.session_id, query, route)
 
         yield TaskEvent(
             task_id=task_request.task_id,

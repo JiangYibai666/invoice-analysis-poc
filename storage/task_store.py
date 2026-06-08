@@ -6,9 +6,12 @@ from pathlib import Path
 from typing import Any
 
 import psycopg2
+from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
 
 from a2a.types import Artifact, Message, TaskState
+
+load_dotenv()
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 

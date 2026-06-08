@@ -1,4 +1,4 @@
-"""Safe SQL execution for LLM-generated queries against invoices_uat."""
+"""Safe SQL execution for LLM-generated read-only PostgreSQL queries."""
 from __future__ import annotations
 
 import os
@@ -8,15 +8,10 @@ from decimal import Decimal
 from typing import Any
 
 import psycopg2
+from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
 
-_INVOICE_DB_PARAMS: dict[str, Any] = {
-    "host": os.getenv("INVOICE_DB_HOST", "localhost"),
-    "port": int(os.getenv("INVOICE_DB_PORT", "5432")),
-    "user": os.getenv("INVOICE_DB_USER", "postgres"),
-    "password": os.getenv("INVOICE_DB_PASSWORD", "postgres"),
-    "dbname": os.getenv("INVOICE_DB_NAME", "invoices_uat"),
-}
+load_dotenv()
 
 # Only SELECT is allowed at the start of the statement.
 _ONLY_SELECT = re.compile(r"^\s*SELECT\b", re.IGNORECASE)
@@ -34,6 +29,26 @@ _STRIP_LIMIT = re.compile(r"\bLIMIT\s+\d+\b", re.IGNORECASE)
 MAX_ROWS = 200
 
 
+def invoice_db_params() -> dict[str, Any]:
+    return {
+        "host": os.getenv("INVOICE_DB_HOST", "localhost"),
+        "port": int(os.getenv("INVOICE_DB_PORT", "5432")),
+        "user": os.getenv("INVOICE_DB_USER", "postgres"),
+        "password": os.getenv("INVOICE_DB_PASSWORD", "postgres"),
+        "dbname": os.getenv("INVOICE_DB_NAME", "invoices"),
+    }
+
+
+def purchase_db_params() -> dict[str, Any]:
+    return {
+        "host": os.getenv("PURCHASE_DB_HOST", os.getenv("INVOICE_DB_HOST", "localhost")),
+        "port": int(os.getenv("PURCHASE_DB_PORT", os.getenv("INVOICE_DB_PORT", "5432"))),
+        "user": os.getenv("PURCHASE_DB_USER", os.getenv("INVOICE_DB_USER", "postgres")),
+        "password": os.getenv("PURCHASE_DB_PASSWORD", os.getenv("INVOICE_DB_PASSWORD", "postgres")),
+        "dbname": os.getenv("PURCHASE_DB_NAME", "purchase"),
+    }
+
+
 def validate_sql(sql: str) -> str:
     """Return the stripped SQL or raise ValueError if it is unsafe."""
     stripped = sql.strip().rstrip(";")
@@ -44,7 +59,7 @@ def validate_sql(sql: str) -> str:
     return stripped
 
 
-def execute_safe_sql(sql: str) -> dict:
+def execute_safe_sql(sql: str, db_params: dict[str, Any] | None = None) -> dict:
     """Validate and execute a SELECT query; return columns, rows, count, and total_count."""
     sql = validate_sql(sql)
 
@@ -63,7 +78,7 @@ def execute_safe_sql(sql: str) -> dict:
             return float(val)
         return val
 
-    conn = psycopg2.connect(**_INVOICE_DB_PARAMS)
+    conn = psycopg2.connect(**(db_params or invoice_db_params()))
     conn.set_session(readonly=True, autocommit=True)
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:

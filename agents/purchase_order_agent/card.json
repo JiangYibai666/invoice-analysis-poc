@@ -3,6 +3,11 @@
     "description": "Checks invoice-to-purchase-order matching by invoice number",
     "skills": [
         {
+            "skill_id": "purchase_order_analytics",
+            "name": "Purchase order analytics",
+            "description": "Answer natural-language analytical questions over purchase order headers, statuses, values, suppliers, and PO items"
+        },
+        {
             "skill_id": "invoice_po_matching",
             "name": "Invoice to PO matching",
             "description": "Verify whether invoice line quantities, unit prices, and amounts match linked purchase order lines"

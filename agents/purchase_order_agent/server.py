@@ -24,7 +24,7 @@ async def stream_handler(request: TaskRequest) -> AsyncIterator[TaskEvent]:
     yield TaskEvent(
         task_id=request.task_id,
         state=TaskState.WORKING,
-        message="PurchaseOrderAgent: checking invoice-to-PO matching",
+        message="PurchaseOrderAgent: processing purchase order request",
     )
     await asyncio.sleep(0.05)
 

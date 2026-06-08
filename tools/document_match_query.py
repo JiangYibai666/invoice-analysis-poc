@@ -9,14 +9,17 @@ from decimal import Decimal
 from typing import Any
 
 import psycopg2
+from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
+
+load_dotenv()
 
 _INVOICE_DB_PARAMS: dict[str, Any] = {
     "host": os.getenv("INVOICE_DB_HOST", "localhost"),
     "port": int(os.getenv("INVOICE_DB_PORT", "5432")),
     "user": os.getenv("INVOICE_DB_USER", "postgres"),
     "password": os.getenv("INVOICE_DB_PASSWORD", "postgres"),
-    "dbname": os.getenv("INVOICE_DB_NAME", "invoices_uat"),
+    "dbname": os.getenv("INVOICE_DB_NAME", "invoices"),
 }
 
 _PURCHASE_DB_PARAMS: dict[str, Any] = {

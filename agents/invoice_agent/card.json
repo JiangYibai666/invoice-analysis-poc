@@ -1,21 +1,11 @@
 {
     "agent_name": "InvoiceAgent",
-    "description": "Queries the invoices_uat PostgreSQL database to analyse invoice data",
+    "description": "Queries the configured invoice PostgreSQL database to analyse invoice data",
     "skills": [
         {
-            "skill_id": "long_pending_invoices",
-            "name": "Long-pending invoice detection",
-            "description": "Find invoices that have been in a non-terminal state for more than N days"
-        },
-        {
-            "skill_id": "supplier_frequency",
-            "name": "Supplier invoicing frequency",
-            "description": "Rank suppliers by how many invoices they have submitted"
-        },
-        {
-            "skill_id": "supplier_amount",
-            "name": "Supplier invoicing amount",
-            "description": "Rank suppliers by their total, average, minimum or maximum invoice amounts"
+            "skill_id": "invoice_analytics",
+            "name": "Invoice analytics",
+            "description": "Answer natural-language analytical questions over invoice, supplier, buyer, amount, status, and payment fields"
         }
     ]
 }

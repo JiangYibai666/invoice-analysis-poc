@@ -1,7 +1,7 @@
 # ── Database schema fed to Gemini ─────────────────────────────────────────────
 
 SCHEMA_CONTEXT = """
-Database: invoices_uat (PostgreSQL)
+Database: INVOICE_DB (PostgreSQL)
 
 TABLE public.invoice  (9 289 rows)
   id                      bigint          PK
