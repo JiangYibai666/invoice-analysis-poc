@@ -13,8 +13,8 @@ from psycopg2.extras import RealDictCursor
 
 load_dotenv()
 
-# Only SELECT is allowed at the start of the statement.
-_ONLY_SELECT = re.compile(r"^\s*SELECT\b", re.IGNORECASE)
+# Only SELECT (or a CTE starting with WITH) is allowed at the start.
+_ONLY_SELECT = re.compile(r"^\s*(SELECT|WITH)\b", re.IGNORECASE)
 
 # Deny any data-modification or administrative keywords anywhere in the query.
 _FORBIDDEN = re.compile(
@@ -53,7 +53,7 @@ def validate_sql(sql: str) -> str:
     """Return the stripped SQL or raise ValueError if it is unsafe."""
     stripped = sql.strip().rstrip(";")
     if not _ONLY_SELECT.match(stripped):
-        raise ValueError("Only SELECT statements are permitted.")
+        raise ValueError("Only SELECT statements (or CTEs starting with WITH) are permitted.")
     if _FORBIDDEN.search(stripped):
         raise ValueError("Query contains a forbidden keyword.")
     return stripped

@@ -10,7 +10,7 @@ from a2a.types import TaskEvent, TaskRequest, TaskResponse
 
 
 class A2AClient:
-    def __init__(self, timeout: float = 60.0) -> None:
+    def __init__(self, timeout: float | httpx.Timeout = 60.0) -> None:
         self._client = httpx.AsyncClient(timeout=timeout)
 
     async def close(self) -> None:

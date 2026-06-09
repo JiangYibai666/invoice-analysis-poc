@@ -33,22 +33,59 @@ Terminal invoice_status values (closed / resolved):
 Non-terminal = invoice_status NOT IN ('PAID','COMPLETED','REJECTED','CANCELLED','VOID','FAILED')
 
 TABLE public.supplier_information
-  id               bigint          PK
-  supplier_code    varchar(255)
-  supplier_uuid    varchar(255)
-  company_name     varchar(255)    human-readable supplier name
+  id                bigint          PK
+  supplier_code     varchar(255)
+  supplier_uuid     varchar(255)
+  company_name      varchar(255)    human-readable supplier name
   country_of_origin varchar(255)
 
 TABLE public.buyer_information
-  id               bigint          PK
-  buyer_code       varchar(255)
-  buyer_uuid       varchar(255)
-  company_name     varchar(255)    human-readable buyer name
+  id            bigint          PK
+  buyer_code    varchar(255)
+  buyer_uuid    varchar(255)
+  company_name  varchar(255)    human-readable buyer name  ← use company_name
 
-Common JOIN pattern:
+TABLE public.invoice_item  (12 475 rows)
+  id                      bigint PK
+  invoice_id              bigint FK -> public.invoice.id
+  item_code               varchar(100)
+  item_name               varchar(255)
+  item_description        text
+  uom                     varchar(255)
+  invoice_qty             numeric
+  invoice_unit_price      numeric
+  invoice_net_price       numeric(15,2)
+  invoice_tax_amount      numeric(15,2)
+  po_number               varchar(255)   linked PO number
+  po_uuid                 varchar(255)
+  po_qty                  numeric
+  po_unit_price           numeric
+  po_net_price            numeric(15,2)
+  do_number               varchar(255)   linked DO number
+  do_uuid                 varchar(255)
+  do_qty_converted        numeric
+  do_qty_received         numeric
+  gr_number               varchar(255)   goods receipt number
+  tax_claimable           boolean
+  price_type              varchar(100)
+  contracted              boolean
+  contract_reference_number varchar(500)
+
+Common JOIN patterns:
+  -- supplier and buyer names:
   FROM public.invoice i
   JOIN public.supplier_information s ON s.id = i.supplier_id
   JOIN public.buyer_information    b ON b.id = i.buyer_id
+
+  -- invoice line items:
+  FROM public.invoice i
+  JOIN public.invoice_item ii ON ii.invoice_id = i.id
+
+  -- full detail (invoice + items + supplier + buyer):
+  FROM public.invoice i
+  JOIN public.invoice_item ii          ON ii.invoice_id = i.id
+  JOIN public.supplier_information s   ON s.id = i.supplier_id
+  JOIN public.buyer_information b      ON b.id = i.buyer_id
 """.strip()
 
 # ── SQL generation system prompt ──────────────────────────────────────────────
@@ -59,7 +96,8 @@ write a single valid SELECT statement that answers it.
 
 Rules:
 - Output ONLY the SQL statement — no explanations, no markdown, no code fences.
-- Use only SELECT; never INSERT, UPDATE, DELETE, DROP, TRUNCATE, ALTER, or any DDL/DML.
+- Use only SELECT (CTEs starting with WITH are also permitted); never INSERT, UPDATE, DELETE, DROP, TRUNCATE, ALTER, or any DDL/DML.
+- Never use UNION or UNION ALL; use a single query or CTE instead.
 - Always qualify table names with the schema: public.invoice, public.supplier_information, etc.
 - Use ILIKE for case-insensitive text filters.
 - For "pending" or "outstanding" invoices use:

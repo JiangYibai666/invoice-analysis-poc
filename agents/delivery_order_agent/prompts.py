@@ -5,15 +5,15 @@ TABLE public.delivery_order
   id                    bigint PK
   delivery_order_number varchar(50)
   global_do_number      varchar(50)
-  status                varchar(255)
+  status                varchar(255)   DO workflow status
   delivery_date         timestamptz
   created_date          timestamptz
   issued_date           timestamptz
-  po_list               varchar(255)
+  po_list               varchar(255)   linked PO number(s)
   procurement_type      varchar(50)
   company_uuid          varchar(255)
-  buyer_id              bigint
-  supplier_id           bigint
+  supplier_id           bigint FK -> public.suppliers.id
+  buyer_id              bigint FK -> public.buyer_information.id
   currency_code         varchar(50)
   buyer_company_uuid    varchar(255)
   project_code          varchar(50)
@@ -24,8 +24,9 @@ TABLE public.delivery_order
 TABLE public.delivery_order_item
   id                           bigint PK
   delivery_order_id            bigint FK -> public.delivery_order.id
-  purchase_order_number        varchar(255)
+  purchase_order_number        varchar(255)   text reference to PO
   purchase_order_uuid          varchar(255)
+  po_item_id                   bigint         FK to po_item (no hard FK constraint)
   item_code                    varchar(100)
   item_name                    varchar(255)
   item_description             text
@@ -38,15 +39,43 @@ TABLE public.delivery_order_item
   invoice_qty                  numeric(25,12)
   invoice_rejected_qty         numeric(25,12)
   invoice_pending_approval_qty numeric(25,12)
-  po_item_id                   bigint
   price_type                   varchar(100)
   contracted                   boolean
   contract_reference_number    varchar(500)
   over_purchased_qty           boolean
 
-Common JOIN pattern:
+TABLE public.suppliers
+  id                   bigint PK
+  uuid                 varchar(255)
+  code                 varchar(255)   supplier code
+  company_name         varchar(255)   human-readable supplier name
+  contact_person_name  varchar(255)
+  contact_person_email varchar(255)
+  country_of_origin    varchar(255)
+
+TABLE public.buyer_information
+  id              bigint PK
+  buyer_code      varchar(50)
+  buyer_name      varchar(150)   human-readable buyer name  ← use buyer_name (NOT company_name)
+  country         varchar(50)
+  company_reg_no  varchar(150)
+  uuid            varchar(255)
+
+Common JOIN patterns:
+  -- items:
   FROM public.delivery_order doo
   JOIN public.delivery_order_item doi ON doi.delivery_order_id = doo.id
+
+  -- supplier name:
+  FROM public.delivery_order doo
+  JOIN public.suppliers s ON s.id = doo.supplier_id
+
+  -- buyer name:
+  FROM public.delivery_order doo
+  JOIN public.buyer_information b ON b.id = doo.buyer_id
+
+  -- cross-reference to PO items:
+  JOIN public.po_item poi ON poi.id = doi.po_item_id
 """.strip()
 
 SQL_SYSTEM_PROMPT = """
@@ -55,11 +84,15 @@ Given a natural-language question about delivery orders, write one valid SELECT.
 
 Rules:
 - Output ONLY the SQL statement.
-- Use only SELECT.
+- Use only SELECT. CTEs (WITH clauses) are permitted and preferred for complex queries.
 - Always qualify table names with public.
 - Use ILIKE for case-insensitive text filters.
 - Use LIMIT 50 unless the user requests a specific limit.
 - Delivery order facts are quantity/status/date based; do not invent amounts.
+- Never use UNION or UNION ALL; use a single query or CTE instead.
+- Focus only on delivery order data. Do not attempt to answer questions about purchase orders.
+- Supplier names: JOIN public.suppliers s ON s.id = doo.supplier_id, use s.company_name.
+- Buyer names: JOIN public.buyer_information b ON b.id = doo.buyer_id, use b.buyer_name (NOT b.company_name).
 - Prefer readable aliases.
 """.strip()
 

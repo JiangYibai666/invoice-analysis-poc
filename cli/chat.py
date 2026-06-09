@@ -72,15 +72,51 @@ def _render_markdown_table(md: str) -> None:
 
 
 _HELP = """
-Available queries (natural language):
+Available queries by category (natural language):
+
+  ── Invoice Analytics (InvoiceAgent) ──────────────────────────────────────────
   • "Which invoices have been pending for more than 60 days?"
   • "Show me the top 10 suppliers by invoice count"
-  • "Which suppliers have the highest invoice amounts?"
-  • "Which suppliers have the lowest total invoice amounts?"
-  • "Give me a full invoice analysis"
+  • "Which suppliers have the highest total invoice amounts?"
+  • "Which buyers have the most unpaid invoices?"
+  • "List all invoices with payment status OVERDUE"
+  • "Show invoices submitted this month grouped by currency"
+  • "Which invoices are still in non-terminal status?"
+  • "What is the total invoice amount per supplier for SGD invoices?"
+  • "Show the 5 largest invoices by total amount"
+  • "How many invoices are in each invoice_status?"
+
+  ── Purchase Order Analytics (PurchaseOrderAgent) ─────────────────────────────
   • "Show top 10 purchase orders by value"
+  • "Which 3 suppliers have the most amount of PO?"
+  • "Which buyers have raised the most purchase orders?"
+  • "List all open POs that have not been fully received"
+  • "Show POs by status and count"
+  • "Which POs have the highest tax amount?"
+  • "Show all POs raised this year grouped by supplier"
+  • "What is the total PO value per currency?"
+  • "List contracted PO items with their net prices"
+
+  ── Delivery Order Analytics (DeliveryOrderAgent) ─────────────────────────────
+  • "Which 3 suppliers have the most amount of DO?"
   • "Which delivery orders are pending?"
-  • "Check three-way matching for invoice INV-00000001"
+  • "Show DOs with the highest total received quantity"
+  • "Which buyers have the most delivery orders?"
+  • "List DOs that have rejected quantities"
+  • "Show delivery orders grouped by status"
+  • "Which DOs are linked to the most PO items?"
+  • "List DOs delivered this month"
+
+  ── Document Matching (PurchaseOrderAgent + DeliveryOrderAgent) ───────────────
+  • "Check two-way matching for invoice INV-00000001"   (invoice ↔ PO)
+  • "Does invoice INV-00000001 match its delivery order?"  (invoice ↔ DO)
+  • "Check three-way matching for invoice INV-00000001"  (invoice ↔ PO + DO)
+  • "Is INV-00000002 matched against its PO?"
+  • "Show matching result for invoice INV-00000005"
+
+  ── Cross-domain Analysis (multiple agents) ───────────────────────────────────
+  • "Which 3 suppliers have the most PO and DO?"
+  • "Compare PO and DO counts by supplier"
 
 Type 'help' to show this message, 'exit' to quit.
 """.strip()
@@ -146,22 +182,44 @@ def _render_report(report: dict) -> None:
         console.print(f"[bold red]Error:[/bold red] {raw.get('error', 'Unknown error')}")
 
 
+def _display_routing(message: str) -> None:
+    """Parse a HostAgent routing event and print which agents are being used."""
+    # Message format: "HostAgent: route=<task_type> targets=AgentA,AgentB"
+    if "targets=" not in message:
+        return
+    agents_str = message.split("targets=", 1)[1].strip()
+    agents = [a.strip() for a in agents_str.split(",") if a.strip()]
+    agent_labels = ", ".join(f"[bold magenta]{a}[/bold magenta]" for a in agents)
+    console.print(f"[dim]→ Routing to:[/dim] {agent_labels}")
+
+
 async def ask_once(query: str) -> None:
+    import httpx as _httpx
     request = TaskRequest(
         source_agent="CLI",
         target_agent="HostAgent",
         message=Message(role="user", parts=[TextPart(text=query)]),
     )
-    client = A2AClient(timeout=120.0)
+    # connect/write timeout of 15 s; read timeout disabled so long-running
+    # multi-agent SSE streams are not cut off mid-flight.
+    streaming_timeout = _httpx.Timeout(connect=15.0, read=None, write=30.0, pool=15.0)
+    client = A2AClient(timeout=streaming_timeout)
     try:
-        response = await client.send(request)
-        if response.state == TaskState.FAILED:
-            console.print(f"[red]{response.error or 'HostAgent request failed'}[/red]")
-            return
-        if response.artifact is not None:
-            for part in response.artifact.parts:
-                if getattr(part, "type", "") == "data":
-                    _render_report(part.data)
+        async for event in client.send_subscribe(request):
+            if event.state == TaskState.FAILED:
+                console.print(f"[red]{event.message or 'HostAgent request failed'}[/red]")
+                return
+            if event.state == TaskState.WORKING and event.message and "targets=" in event.message:
+                _display_routing(event.message)
+            if event.state == TaskState.COMPLETED and event.artifact is not None:
+                for part in event.artifact.parts:
+                    if getattr(part, "type", "") == "data":
+                        _render_report(part.data)
+    except _httpx.ReadTimeout:
+        console.print("[red]Request timed out waiting for the agent to respond. "
+                      "The query may be too complex or the backend is overloaded.[/red]")
+    except _httpx.ConnectError:
+        console.print("[red]Could not connect to HostAgent. Is the server running?[/red]")
     finally:
         await client.close()
 

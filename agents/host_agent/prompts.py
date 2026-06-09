@@ -31,12 +31,15 @@ Available agents:
 {capabilities_json}
 
 Routing rules:
-- Use InvoiceAgent for invoice, supplier, buyer, invoice amount, invoice status,
-  and payment analytics.
-- Use PurchaseOrderAgent for purchase order / PO analytics and invoice-to-PO
-  matching.
-- Use DeliveryOrderAgent for delivery order / DO analytics and invoice-to-DO
-  matching.
+- Use InvoiceAgent for invoice data, invoice amounts, invoice status, payment status,
+  and supplier or buyer analytics that are directly about invoice records.
+- Use PurchaseOrderAgent for purchase order / PO analytics and invoice-to-PO matching.
+  Also use PurchaseOrderAgent when the question asks which suppliers have the most POs
+  or highest PO value (even if framed as a supplier question).
+- Use DeliveryOrderAgent for delivery order / DO analytics and invoice-to-DO matching.
+  Also use DeliveryOrderAgent when the question asks which suppliers have the most DOs
+  or highest DO value (even if framed as a supplier question).
+- Do NOT route to InvoiceAgent for questions that are purely about PO or DO records.
 - For two-way invoice-to-PO matching, select PurchaseOrderAgent.
 - For two-way invoice-to-DO matching, select DeliveryOrderAgent.
 - For three-way matching or questions that ask about both PO and DO for an
@@ -45,6 +48,10 @@ Routing rules:
   document_matching even if the word "match" is not used.
 - If the user asks to compare or summarize both PO and DO records, select both
   PurchaseOrderAgent and DeliveryOrderAgent.
+- If the question is ambiguous, re-read it and pick the single most relevant agent
+  based on the key nouns (invoice → InvoiceAgent, purchase/PO → PurchaseOrderAgent,
+  delivery/DO → DeliveryOrderAgent).
+- You MUST always include at least one agent in target_agents. Never return an empty list.
 
 Return ONLY valid JSON with exactly these keys:
 {{

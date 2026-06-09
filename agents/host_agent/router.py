@@ -26,6 +26,13 @@ _VALID_TASK_TYPES = {
     "document_matching",
 }
 
+# Keyword hints used as a last-resort fallback when the LLM returns no valid agents.
+_KEYWORD_FALLBACK: list[tuple[list[str], AgentName, str]] = [
+    (["purchase order", " po ", "po ", " po,", "p.o."], "PurchaseOrderAgent", "purchase_order_analysis"),
+    (["delivery order", " do ", "do ", " do,", "d.o."], "DeliveryOrderAgent", "delivery_order_analysis"),
+    (["invoice", "supplier", "buyer", "payment"], "InvoiceAgent", "invoice_analysis"),
+]
+
 
 def _extract_json(text: str) -> dict[str, Any]:
     stripped = text.strip()
@@ -53,6 +60,7 @@ def _normalize_route(payload: dict[str, Any]) -> RouteDecision:
             target_agents.append(raw_agent)
 
     if not target_agents:
+        # LLM returned an empty list — apply keyword fallback before giving up.
         raise ValueError("Router must select at least one target agent.")
 
     task_type = str(payload.get("task_type") or "").strip()
@@ -75,6 +83,29 @@ def _normalize_route(payload: dict[str, Any]) -> RouteDecision:
     }
 
 
+def _fallback_route(query: str) -> RouteDecision:
+    """Keyword-based fallback when the LLM router fails to return a valid decision."""
+    q = query.lower()
+    for keywords, agent, ttype in _KEYWORD_FALLBACK:
+        if any(kw in q for kw in keywords):
+            return {
+                "target_agents": [agent],
+                "reason": "Fallback routing based on keyword matching.",
+                "required_entities": [],
+                "task_type": ttype,
+                "capabilities": {agent: AGENT_CAPABILITIES[agent]},
+            }
+    # Last resort: all three agents try to answer
+    all_agents: list[AgentName] = ["InvoiceAgent", "PurchaseOrderAgent", "DeliveryOrderAgent"]
+    return {
+        "target_agents": all_agents,
+        "reason": "Could not determine intent; broadcasting to all agents.",
+        "required_entities": [],
+        "task_type": "invoice_analysis",
+        "capabilities": {a: AGENT_CAPABILITIES[a] for a in all_agents},
+    }
+
+
 def route_query(query: str) -> RouteDecision:
     capabilities_json = json.dumps(AGENT_CAPABILITIES, indent=2)
     prompt = ROUTER_PROMPT_TEMPLATE.format(
@@ -83,5 +114,8 @@ def route_query(query: str) -> RouteDecision:
     )
 
     client = get_client()
-    payload = _extract_json(generate_content(client, prompt))
-    return _normalize_route(payload)
+    try:
+        payload = _extract_json(generate_content(client, prompt))
+        return _normalize_route(payload)
+    except (ValueError, KeyError):
+        return _fallback_route(query)

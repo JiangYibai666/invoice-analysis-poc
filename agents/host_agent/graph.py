@@ -138,7 +138,7 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
         message="HostAgent: routing request",
     )
 
-    client = A2AClient()
+    client = A2AClient(timeout=30.0)
     try:
         route = route_query(query)
         yield TaskEvent(
@@ -181,10 +181,11 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
         )
 
     except Exception as exc:
+        err_msg = str(exc) or type(exc).__name__
         yield TaskEvent(
             task_id=task_request.task_id,
             state=TaskState.FAILED,
-            message=f"HostAgent error: {exc}",
+            message=f"HostAgent error: {err_msg}",
         )
     finally:
         await client.close()
