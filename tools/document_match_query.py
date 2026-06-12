@@ -54,6 +54,8 @@ _BAD_INVOICE_TOKENS = {
 }
 
 _TOLERANCE = Decimal("0.01")
+DEFAULT_BATCH_MATCH_LIMIT = 20
+MAX_BATCH_MATCH_LIMIT = 50
 
 
 def extract_invoice_no(text: str) -> str | None:
@@ -66,10 +68,53 @@ def extract_invoice_no(text: str) -> str | None:
     return None
 
 
+def extract_requested_limit(
+    text: str,
+    default: int = DEFAULT_BATCH_MATCH_LIMIT,
+    maximum: int = MAX_BATCH_MATCH_LIMIT,
+) -> int:
+    """Extract a user-requested batch size from text, bounded for safe matching."""
+    patterns = (
+        r"\b(?:top|first|latest|last|limit|show|list|check)\s+(\d{1,3})\b",
+        r"\b(\d{1,3})\s+(?:invoices?|records?|items?)\b",
+        r"(?:前|最近|最新|检查|列出)\s*(\d{1,3})\s*(?:张|个|条)?",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return min(max(1, int(match.group(1))), maximum)
+    return min(max(1, int(default)), maximum)
+
+
 def _connect(params: dict[str, Any]) -> psycopg2.extensions.connection:
     conn = psycopg2.connect(**params)
     conn.set_session(readonly=True, autocommit=True)
     return conn
+
+
+def list_invoice_numbers_for_matching(limit: int = DEFAULT_BATCH_MATCH_LIMIT) -> list[str]:
+    """Return recent invoice numbers with line items for batch PO/DO matching."""
+    limit = min(max(1, int(limit)), MAX_BATCH_MATCH_LIMIT)
+    sql = """
+        SELECT i.invoice_no
+        FROM public.invoice i
+        WHERE i.invoice_no IS NOT NULL
+          AND EXISTS (
+              SELECT 1
+              FROM public.invoice_item ii
+              WHERE ii.invoice_id = i.id
+          )
+        ORDER BY i.invoice_submission_date DESC NULLS LAST, i.id DESC
+        LIMIT %s
+    """
+
+    conn = _connect(_INVOICE_DB_PARAMS)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, (limit,))
+            return [str(row["invoice_no"]) for row in cur.fetchall()]
+    finally:
+        conn.close()
 
 
 def _serialize(value: Any) -> Any:
@@ -382,4 +427,111 @@ def query_invoice_do_match(invoice_no: str, limit: int = 100) -> dict[str, Any]:
         "unknown_quantity_lines": unknown_lines,
         "summary": summary,
         "lines": lines,
+    }
+
+
+def _without_lines(result: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in result.items() if key != "lines"}
+
+
+def _batch_summary(
+    label: str,
+    invoice_numbers: list[str],
+    results: list[dict[str, Any]],
+) -> str:
+    checked_count = len(invoice_numbers)
+    found_count = sum(1 for result in results if result.get("found") is True)
+    matched_count = sum(1 for result in results if result.get("matched") is True)
+    needs_review_count = sum(
+        1
+        for result in results
+        if result.get("found") is True and result.get("matched") is not True
+    )
+    not_found_count = checked_count - found_count
+    not_found_note = f", and {not_found_count} were not found" if not_found_count else ""
+    outcome = "passed for all checked invoices" if checked_count and matched_count == checked_count else "needs review"
+
+    return (
+        f"No invoice number was provided, so {label} checked {checked_count} recent invoice(s). "
+        f"{matched_count} passed, {needs_review_count} need review"
+        f"{not_found_note}. "
+        f"In summary: Batch {label} matching {outcome}."
+    )
+
+
+def query_invoice_po_batch_match(invoice_numbers: list[str]) -> dict[str, Any]:
+    """Run Invoice-to-PO matching for a shared batch of invoice numbers."""
+    invoice_numbers = list(dict.fromkeys(str(value) for value in invoice_numbers if value))
+    if not invoice_numbers:
+        return {
+            "query_type": "po_batch_match",
+            "found": False,
+            "matched": False,
+            "invoice_numbers": [],
+            "checked_count": 0,
+            "matched_count": 0,
+            "needs_review_count": 0,
+            "summary": "No invoice number was provided and no candidate invoices were found for PO matching.",
+            "results": [],
+        }
+
+    results = [query_invoice_po_match(invoice_no) for invoice_no in invoice_numbers]
+    matched_count = sum(1 for result in results if result.get("matched") is True)
+    needs_review_count = sum(
+        1
+        for result in results
+        if result.get("found") is True and result.get("matched") is not True
+    )
+    not_found_count = sum(1 for result in results if result.get("found") is not True)
+
+    return {
+        "query_type": "po_batch_match",
+        "found": any(result.get("found") is True for result in results),
+        "matched": bool(results) and matched_count == len(results),
+        "invoice_numbers": invoice_numbers,
+        "checked_count": len(results),
+        "matched_count": matched_count,
+        "needs_review_count": needs_review_count,
+        "not_found_count": not_found_count,
+        "summary": _batch_summary("Invoice-to-PO", invoice_numbers, results),
+        "results": [_without_lines(result) for result in results],
+    }
+
+
+def query_invoice_do_batch_match(invoice_numbers: list[str]) -> dict[str, Any]:
+    """Run Invoice-to-DO matching for a shared batch of invoice numbers."""
+    invoice_numbers = list(dict.fromkeys(str(value) for value in invoice_numbers if value))
+    if not invoice_numbers:
+        return {
+            "query_type": "do_batch_match",
+            "found": False,
+            "matched": False,
+            "invoice_numbers": [],
+            "checked_count": 0,
+            "matched_count": 0,
+            "needs_review_count": 0,
+            "summary": "No invoice number was provided and no candidate invoices were found for DO matching.",
+            "results": [],
+        }
+
+    results = [query_invoice_do_match(invoice_no) for invoice_no in invoice_numbers]
+    matched_count = sum(1 for result in results if result.get("matched") is True)
+    needs_review_count = sum(
+        1
+        for result in results
+        if result.get("found") is True and result.get("matched") is not True
+    )
+    not_found_count = sum(1 for result in results if result.get("found") is not True)
+
+    return {
+        "query_type": "do_batch_match",
+        "found": any(result.get("found") is True for result in results),
+        "matched": bool(results) and matched_count == len(results),
+        "invoice_numbers": invoice_numbers,
+        "checked_count": len(results),
+        "matched_count": matched_count,
+        "needs_review_count": needs_review_count,
+        "not_found_count": not_found_count,
+        "summary": _batch_summary("Invoice-to-DO", invoice_numbers, results),
+        "results": [_without_lines(result) for result in results],
     }

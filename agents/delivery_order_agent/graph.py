@@ -10,17 +10,35 @@ from agents.delivery_order_agent.prompts import (
     SUMMARY_SYSTEM_PROMPT,
     TASK_CLASSIFIER_PROMPT_TEMPLATE,
 )
-from tools.document_match_query import extract_invoice_no, query_invoice_do_match
+from tools.document_match_query import (
+    extract_invoice_no,
+    extract_requested_limit,
+    list_invoice_numbers_for_matching,
+    query_invoice_do_batch_match,
+    query_invoice_do_match,
+)
 from tools.gemini_sql import generate_content, generate_sql, get_client, summarize_results
 from tools.sql_query import execute_safe_sql, purchase_db_params
 
 
 def _route_task_type(parts: list[Part]) -> str | None:
+    data = _route_data(parts)
+    task_type = data.get("route_task_type")
+    return str(task_type) if task_type else None
+
+
+def _route_data(parts: list[Part]) -> dict:
     for part in parts:
         if getattr(part, "type", "") == "data":
-            task_type = part.data.get("route_task_type")
-            return str(task_type) if task_type else None
-    return None
+            return part.data
+    return {}
+
+
+def _route_invoice_numbers(parts: list[Part]) -> list[str]:
+    raw_invoice_numbers = _route_data(parts).get("route_invoice_numbers", [])
+    if not isinstance(raw_invoice_numbers, list):
+        return []
+    return [str(value) for value in raw_invoice_numbers if value]
 
 
 def _extract_json(text: str) -> dict:
@@ -62,9 +80,13 @@ def run_delivery_order_graph(message: Message) -> Artifact:
 
         if task_type == "invoice_do_matching":
             invoice_no = extract_invoice_no(query_text)
-            if not invoice_no:
-                raise ValueError("No invoice number found in the question.")
-            data = query_invoice_do_match(invoice_no)
+            if invoice_no:
+                data = query_invoice_do_match(invoice_no)
+            else:
+                invoice_numbers = _route_invoice_numbers(message.parts)
+                if not invoice_numbers:
+                    invoice_numbers = list_invoice_numbers_for_matching(extract_requested_limit(query_text))
+                data = query_invoice_do_batch_match(invoice_numbers)
             data["query"] = query_text
         else:
             client = get_client()
