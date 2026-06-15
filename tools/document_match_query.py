@@ -31,26 +31,28 @@ _PURCHASE_DB_PARAMS: dict[str, Any] = {
 }
 
 _INVOICE_NO_PATTERNS = (
+    # Explicit "invoice" / "inv" keyword followed by the number
     re.compile(
-        r"(?:\binvoice\b|\binv\b|发票)\s*(?:number|no\.?|编号|号码)?\s*[:：#-]?\s*"
+        r"(?:\binvoice\b|\binv\b)\s*(?:number|no\.?)?\s*[:=#-]?\s*"
         r"([A-Za-z0-9][A-Za-z0-9._/\-]{2,})",
         re.IGNORECASE,
     ),
+    # Classic format with separator: INV-000001, PO_12345, etc.
     re.compile(r"\b([A-Z]{2,}[-_/][A-Z0-9][A-Z0-9._/\-]*)\b"),
+    # No-separator format: INV000103, INV00000001, etc. (letters then 4+ digits)
+    re.compile(r"\b([A-Z]{2,}[0-9]{4,})\b"),
 )
 
 _BAD_INVOICE_TOKENS = {
-    "amount",
-    "amounts",
-    "number",
-    "status",
-    "with",
-    "against",
-    "purchase",
-    "delivery",
-    "order",
-    "match",
-    "matching",
+    # common English words that appear after "invoice" in natural language
+    "and", "an", "a", "the", "its", "is", "are", "was", "be",
+    "for", "or", "to", "of", "in", "on", "at", "by", "from",
+    "that", "this", "related", "all", "my", "their", "our",
+    # domain nouns that look like tokens but are not invoice numbers
+    "amount", "amounts", "number", "status", "date", "item", "items",
+    "total", "details", "info", "data", "record", "records",
+    "purchase", "delivery", "order", "orders", "match", "matching",
+    "analysis", "check", "show", "list", "get", "find", "do", "po",
 }
 
 _TOLERANCE = Decimal("0.01")
@@ -63,6 +65,10 @@ def extract_invoice_no(text: str) -> str | None:
     for pattern in _INVOICE_NO_PATTERNS:
         for match in pattern.finditer(text):
             candidate = match.group(1).strip(".,;:()[]{}\"'")
+            if len(candidate) < 5:  # too short to be a real invoice number
+                continue
+            if not re.search(r"\d", candidate):  # must contain at least one digit
+                continue
             if candidate.lower() not in _BAD_INVOICE_TOKENS:
                 return candidate
     return None
@@ -77,7 +83,6 @@ def extract_requested_limit(
     patterns = (
         r"\b(?:top|first|latest|last|limit|show|list|check)\s+(\d{1,3})\b",
         r"\b(\d{1,3})\s+(?:invoices?|records?|items?)\b",
-        r"(?:前|最近|最新|检查|列出)\s*(\d{1,3})\s*(?:张|个|条)?",
     )
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)

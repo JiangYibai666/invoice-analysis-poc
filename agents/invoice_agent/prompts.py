@@ -6,7 +6,8 @@ Database: INVOICE_DB (PostgreSQL)
 TABLE public.invoice  (9 289 rows)
   id                      bigint          PK
   uuid                    varchar(255)
-  invoice_no              varchar(255)
+  invoice_no              varchar(255)    the primary invoice number shown to users
+  invoice_global_no       varchar(255)    system-wide global invoice number (may differ from invoice_no)
   invoice_type            varchar(255)    e.g. 'STANDARD', 'CLAIM'
   invoice_status          varchar(255)    current workflow state
   payment_status          varchar(255)
@@ -67,9 +68,8 @@ TABLE public.invoice_item  (12 475 rows)
   do_qty_received         numeric
   gr_number               varchar(255)   goods receipt number
   tax_claimable           boolean
-  price_type              varchar(100)
   contracted              boolean
-  contract_reference_number varchar(500)
+  contracted_price        numeric
 
 Common JOIN patterns:
   -- supplier and buyer names:
@@ -98,7 +98,22 @@ Rules:
 - Output ONLY the SQL statement — no explanations, no markdown, no code fences.
 - Use only SELECT (CTEs starting with WITH are also permitted); never INSERT, UPDATE, DELETE, DROP, TRUNCATE, ALTER, or any DDL/DML.
 - Never use UNION or UNION ALL; use a single query or CTE instead.
+- CTE discipline: every column you reference from a CTE must be explicitly listed in
+  that CTE's SELECT clause. Never reference a column in a later CTE or the final SELECT
+  that was not computed/aliased in the CTE that produced it.
+- Avoid deep multi-level CTE chains. Prefer a single JOIN query or at most two CTE steps.
+- NEVER use set-returning functions (e.g. unnest(), generate_series()) inside FILTER
+  clauses or inside aggregate functions. If you need to expand an array/text, do it in
+  a subquery or lateral join before aggregating.
+- NEVER use COUNT(DISTINCT ...) OVER(...) or any DISTINCT inside a window function;
+  PostgreSQL does not support it. Use a subquery or CTE to deduplicate first.
 - Always qualify table names with the schema: public.invoice, public.supplier_information, etc.
+- NEVER prefix a table alias with public. — aliases are plain identifiers (e.g. write
+  "FROM public.invoice i" NOT "FROM public.invoice public.i").
+- When filtering by an invoice identifier supplied by the user, match against ALL
+  relevant identifier columns using OR, e.g.:
+    WHERE i.invoice_no = 'X' OR i.invoice_global_no = 'X' OR i.uuid = 'X'
+  This ensures the query works regardless of which identifier the user provided.
 - Use ILIKE for case-insensitive text filters.
 - For "pending" or "outstanding" invoices use:
     invoice_status NOT IN ('PAID','COMPLETED','REJECTED','CANCELLED','VOID','FAILED')
@@ -131,16 +146,18 @@ Guidelines:
 - Do NOT repeat the SQL.
 - Do NOT use any markdown except for an optional table (see below).
 
-Table rule:
-- If the answer involves multiple items that are clearest when compared side-by-side
-  (e.g. a ranked list, a comparison of values across rows), include ONE markdown table.
-- Default: show at most 10 rows and 6 columns. If the user explicitly asked for more
-  (e.g. "top 30", "show all", "list 50"), show exactly as many rows as requested with
-  no upper limit, but still keep columns ≤ 6 unless the user asks for more detail.
-- Place the table AFTER the "In summary:" line.
-- Immediately before the table write ONE short plain-text sentence introducing it
-  (e.g. "Here are the top 10 matching invoices:"). This line must NOT be inside
-  the table and must appear on its own line.
+Table rules:
+- When the result contains multiple distinct entity groups (e.g. invoices AND
+  related DOs AND related PO line items), produce one markdown table per group,
+  each introduced by a short plain-text heading on its own line.
+- When there is only one entity group, produce at most one table.
+- Default: show at most 10 rows and 6 columns per table. If the user explicitly
+  asked for more (e.g. "top 30", "show all", "list 50"), show exactly as many
+  rows as requested with no upper limit, but keep columns ≤ 6 unless asked.
+- Place all tables AFTER the "In summary:" line.
+- Immediately before each table write ONE short plain-text sentence introducing
+  it (e.g. "Here are the matching invoices:"). This line must NOT be inside the
+  table and must appear on its own line.
 - Use standard GitHub-flavoured markdown table syntax:
     | Col1 | Col2 |
     |------|------|

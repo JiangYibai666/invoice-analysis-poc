@@ -4,6 +4,8 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import Optional
 
+import httpx
+
 from a2a.client import A2AClient
 from a2a.types import Artifact, DataPart, Message, TaskEvent, TaskRequest, TaskState, TextPart
 from agents.host_agent.router import RouteDecision, route_query
@@ -75,9 +77,21 @@ def _build_summary(data: dict) -> str:
 
 
 def _document_matching_context(query: str, route: RouteDecision) -> dict:
+    """Return batch invoice context only when the user explicitly requests N invoices."""
     if route["task_type"] != "document_matching" or extract_invoice_no(query):
         return {}
-
+    # Only build batch context when the user explicitly mentions a quantity
+    # (e.g. "last 10 invoices"). Never silently default to 20.
+    limit_str_patterns = (
+        r"\b(?:top|first|latest|last|limit|show|list|check)\s+\d{1,3}\b",
+        r"\b\d{1,3}\s+(?:invoices?|records?)\b",
+    )
+    import re as _re
+    is_explicit_batch = any(
+        _re.search(p, query, flags=_re.IGNORECASE) for p in limit_str_patterns
+    )
+    if not is_explicit_batch:
+        return {}
     limit = extract_requested_limit(query)
     invoice_numbers = list_invoice_numbers_for_matching(limit)
     return {
@@ -173,7 +187,11 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
         message="HostAgent: routing request",
     )
 
-    client = A2AClient(timeout=30.0)
+    # Each sub-agent makes 2 LLM calls (~10-20 s each) plus a DB query.
+    # Use a fast connect timeout but no read cutoff so parallel multi-agent
+    # queries don't get killed mid-flight.
+    _sub_agent_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=10.0)
+    client = A2AClient(timeout=_sub_agent_timeout)
     try:
         route = route_query(query)
         yield TaskEvent(

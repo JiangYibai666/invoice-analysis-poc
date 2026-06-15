@@ -98,11 +98,29 @@ Given a natural-language question about purchase orders, write one valid SELECT.
 Rules:
 - Output ONLY the SQL statement.
 - Use only SELECT. CTEs (WITH clauses) are permitted and preferred for complex queries.
-- Always qualify table names with public.
+- Always qualify table names with public. (e.g. public.purchase_order).
+- NEVER prefix a table alias with public. — aliases are plain identifiers (e.g. write
+  "FROM public.purchase_order po" NOT "FROM public.purchase_order public.po").
+- When filtering by a PO identifier supplied by the user, match against ALL
+  relevant identifier columns using OR, e.g.:
+    WHERE po.po_number = 'X' OR po.po_global_number = 'X' OR po.uuid = 'X'
+  This ensures the query works regardless of which identifier the user provided.
 - Use ILIKE for case-insensitive text filters.
 - Use LIMIT 50 unless the user requests a specific limit.
 - When aggregating amounts, group by currency_code or currency.
 - Never use UNION or UNION ALL; use a single query or CTE instead.
+- CTE discipline: every column you reference from a CTE must be explicitly listed in
+  that CTE's SELECT clause. Never reference a column in a later CTE or the final SELECT
+  that was not computed/aliased in the CTE that produced it.
+- Avoid deep multi-level CTE chains. Prefer a single JOIN query or at most two CTE steps.
+- NEVER use set-returning functions (e.g. unnest(), generate_series()) inside FILTER
+  clauses or inside aggregate functions. If you need to expand an array/text, do it in
+  a subquery or lateral join before aggregating.
+- NEVER use COUNT(DISTINCT ...) OVER(...) or any DISTINCT inside a window function;
+  PostgreSQL does not support it. Use a subquery or CTE to deduplicate first.
+- purchase_order.delivery_order_number is a plain text field (may contain one DO number
+  or a comma-separated list). Do NOT unnest or split it in aggregates; treat it as an
+  opaque text value or use ILIKE/= for matching.
 - Focus only on purchase order data. Do not attempt to answer questions about delivery orders.
 - Supplier names: use poi.supplier_name (denormalized in po_item) for item-level queries, or JOIN public.suppliers s ON s.id = po.supplier_id and use s.company_name for PO-level supplier queries.
 - Buyer names: JOIN public.buyer_information b ON b.id = po.buyer_id and use b.buyer_name (NOT b.company_name).
@@ -118,7 +136,20 @@ Guidelines:
 - Highlight important PO numbers, statuses, suppliers, amounts, and quantities.
 - Always use the TRUE TOTAL figure when stating how many records match.
 - End with a single sentence starting "In summary:".
-- Include one markdown table when multiple rows are best compared side by side.
+- Do NOT repeat the SQL.
+
+Table rules:
+- When the result contains multiple distinct entity groups (e.g. PO items AND
+  related delivery orders AND related invoices), produce one markdown table per
+  group, each introduced by a short plain-text heading on its own line.
+- When there is only one entity group, produce at most one table.
+- Show at most 20 rows per table and at most 7 columns.
+- Use standard GitHub-flavoured markdown table syntax:
+    | Col1 | Col2 |
+    |------|------|
+    | val1 | val2 |
+- Place all tables AFTER the "In summary:" line.
+- If a simple sentence answers the question equally well, omit the table.
 """.strip()
 
 

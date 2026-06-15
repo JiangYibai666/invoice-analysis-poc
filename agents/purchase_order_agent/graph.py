@@ -35,10 +35,10 @@ def _route_data(parts: list[Part]) -> dict:
 
 
 def _route_invoice_numbers(parts: list[Part]) -> list[str]:
-    raw_invoice_numbers = _route_data(parts).get("route_invoice_numbers", [])
-    if not isinstance(raw_invoice_numbers, list):
+    raw = _route_data(parts).get("route_invoice_numbers", [])
+    if not isinstance(raw, list):
         return []
-    return [str(value) for value in raw_invoice_numbers if value]
+    return [str(v) for v in raw if v]
 
 
 def _extract_json(text: str) -> dict:
@@ -85,8 +85,19 @@ def run_purchase_order_graph(message: Message) -> Artifact:
             else:
                 invoice_numbers = _route_invoice_numbers(message.parts)
                 if not invoice_numbers:
-                    invoice_numbers = list_invoice_numbers_for_matching(extract_requested_limit(query_text))
-                data = query_invoice_po_batch_match(invoice_numbers)
+                    # Only run batch when user explicitly requested N invoices
+                    requested = extract_requested_limit(query_text, default=0)
+                    if requested > 0:
+                        invoice_numbers = list_invoice_numbers_for_matching(requested)
+                if invoice_numbers:
+                    data = query_invoice_po_batch_match(invoice_numbers)
+                else:
+                    data = {
+                        "query_type": "purchase_order_error",
+                        "query": query_text,
+                        "error": "No invoice number found in the question.",
+                        "summary": "Please provide an invoice number to run Invoice-to-PO matching (e.g. INV-00000001).",
+                    }
             data["query"] = query_text
         else:
             client = get_client()

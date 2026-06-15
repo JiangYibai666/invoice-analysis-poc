@@ -108,12 +108,16 @@ Available queries by category (natural language):
   • "List DOs delivered this month"
 
   ── Document Matching (PurchaseOrderAgent + DeliveryOrderAgent) ───────────────
-  • "Check two-way matching for invoice INV-00000001"   (invoice ↔ PO)
+  • "Check invoice INV-00000001" and its related PO"  (invoice ↔ PO)
   • "Does invoice INV-00000001 match its delivery order?"  (invoice ↔ DO)
-  • "Check three-way matching for invoice INV-00000001"  (invoice ↔ PO + DO)
+  • "Check latest 5 DO, and show me related invoice and PO"  (DO ↔ invoice + PO)
   • "Is INV-00000002 matched against its PO?"
   • "Show matching result for invoice INV-00000005"
 
+  ── Batch Document Matching (no specific invoice number needed) ───────────────
+  • "Check latest 5 invoices three-way matching"
+  • "Check invoice-to-PO matching for the last 10 invoices"
+  
   ── Cross-domain Analysis (multiple agents) ───────────────────────────────────
   • "Which 3 suppliers have the most PO and DO?"
   • "Compare PO and DO counts by supplier"
@@ -155,6 +159,8 @@ def _render_report(report: dict) -> None:
                     "yes" if line.get("net_amount_match") is True else "no",
                 )
             console.print(tbl)
+        elif po_match.get("results"):
+            _render_batch_match_results(po_match)
 
         do_lines = do_match.get("lines", [])
         if do_lines:
@@ -177,9 +183,68 @@ def _render_report(report: dict) -> None:
                     "yes" if line.get("quantity_covered") is True else "no",
                 )
             console.print(tbl)
+        elif do_match.get("results"):
+            _render_batch_match_results(do_match)
 
     elif qtype.endswith("_error") or qtype == "error":
         console.print(f"[bold red]Error:[/bold red] {raw.get('error', 'Unknown error')}")
+
+
+def _render_batch_match_results(match: dict) -> None:
+    """Render per-invoice rows from a po_batch_match or do_batch_match result."""
+    results = match.get("results", [])
+    if not results:
+        return
+
+    is_po = "po" in match.get("query_type", "")
+    title = "Invoice-to-PO Batch Matching" if is_po else "Invoice-to-DO Batch Matching"
+    tbl = Table(title=title, show_lines=True)
+    tbl.add_column("Invoice No", style="cyan")
+    tbl.add_column("Found")
+    tbl.add_column("Result")
+    tbl.add_column("Lines", justify="right")
+    if is_po:
+        tbl.add_column("Missing PO", justify="right")
+        tbl.add_column("Mismatched", justify="right")
+        tbl.add_column("Inv Total", justify="right")
+        tbl.add_column("PO Total", justify="right")
+        tbl.add_column("Variance", justify="right")
+    else:
+        tbl.add_column("Missing DO", justify="right")
+        tbl.add_column("Uncovered", justify="right")
+
+    for r in results:
+        inv_no = str(r.get("invoice_no") or "")
+        found = "yes" if r.get("found") else "no"
+        if not r.get("found"):
+            result_cell = "not found"
+        elif r.get("matched"):
+            result_cell = "[green]pass[/green]"
+        else:
+            result_cell = "[red]review[/red]"
+        lines = str(r.get("line_count") or 0)
+        if is_po:
+            tbl.add_row(
+                inv_no,
+                found,
+                result_cell,
+                lines,
+                str(r.get("missing_po_lines") or 0),
+                str(r.get("mismatched_lines") or 0),
+                f"{float(r['invoice_line_total']):,.2f}" if r.get("invoice_line_total") is not None else "",
+                f"{float(r['po_line_total']):,.2f}" if r.get("po_line_total") is not None else "",
+                f"{float(r['amount_variance']):,.2f}" if r.get("amount_variance") is not None else "",
+            )
+        else:
+            tbl.add_row(
+                inv_no,
+                found,
+                result_cell,
+                lines,
+                str(r.get("missing_do_lines") or 0),
+                str(r.get("uncovered_lines") or 0),
+            )
+    console.print(tbl)
 
 
 def _display_routing(message: str) -> None:
