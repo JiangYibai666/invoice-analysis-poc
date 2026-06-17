@@ -16,36 +16,34 @@ console = Console()
 
 def _render_summary(text: str, title: str) -> None:
     """Display the summary Panel and, if the LLM included a markdown table, render it."""
-    # Split out any embedded markdown table block.
-    # A table block is one or more consecutive lines that start with '|'.
     table_re = re.compile(r"(\n?(?:\|[^\n]+\|\n?)+)", re.MULTILINE)
-    match = table_re.search(text)
+    matches = list(table_re.finditer(text))
 
-    if match:
-        before_table = text[: match.start()].strip()
-
-        # Everything up to and including "In summary:" goes in the Panel.
-        # Any lines after "In summary:" (the table intro) are printed between
-        # the Panel and the table.
-        lines = before_table.splitlines()
-        panel_lines: list[str] = []
-        intro_lines: list[str] = []
-        past_summary = False
-        for line in lines:
-            if not past_summary:
-                panel_lines.append(line)
-                if line.strip().lower().startswith("in summary:"):
-                    past_summary = True
-            else:
-                intro_lines.append(line)
-
-        console.print(Panel.fit("\n".join(panel_lines).strip() or " ", title=title))
-        intro = "\n".join(intro_lines).strip()
-        if intro:
-            console.print(f"\n{intro}")
-        _render_markdown_table(match.group(1).strip())
-    else:
+    if not matches:
         console.print(Panel.fit(text, title=title))
+        return
+
+    cursor = 0
+    printed_panel = False
+    for match in matches:
+        before_table = text[cursor:match.start()].strip()
+        if before_table:
+            if printed_panel:
+                console.print(f"\n{before_table}")
+            else:
+                console.print(Panel.fit(before_table, title=title))
+                printed_panel = True
+
+        _render_markdown_table(match.group(1).strip())
+        cursor = match.end()
+
+    tail = text[cursor:].strip()
+    if tail:
+        if printed_panel:
+            console.print(f"\n{tail}")
+        else:
+            console.print(Panel.fit(tail, title=title))
+            printed_panel = True
 
 
 def _render_markdown_table(md: str) -> None:

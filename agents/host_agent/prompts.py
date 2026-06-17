@@ -9,11 +9,12 @@ Agent responsibilities:
 - PurchaseOrderAgent: purchase order analytics and Invoice-to-PO matching.
 - DeliveryOrderAgent: delivery order analytics and Invoice-to-DO matching.
 
-Routing output should be structured as:
+Routing output should be structured as valid JSON, for example:
 {
-  "target_agents": ["InvoiceAgent" | "PurchaseOrderAgent" | "DeliveryOrderAgent"],
+  "target_agents": ["InvoiceAgent"],
   "reason": "short reason",
-  "required_entities": ["invoice_no", ...]
+  "required_entities": ["invoice_no"],
+  "task_type": "invoice_analysis"
 }
 
 For matching scenarios, coordinate PO and/or DO results and produce a two-way or
@@ -44,9 +45,6 @@ Routing rules:
     * Only use document_matching when the user explicitly wants to VERIFY or AUDIT
       an invoice against its PO or DO AND provides a specific invoice number
       (e.g. "does INV-00000001 match its PO?", "check three-way matching for INV-XXXXX").
-    * Always include InvoiceAgent alongside PurchaseOrderAgent or DeliveryOrderAgent
-      for document_matching, so invoice header details are returned together with
-      the matching result.
     * If the user wants invoice-to-PO or invoice-to-DO matching but provides NO
       specific invoice number, do NOT use document_matching. Instead use
       task_type "purchase_order_analysis" or "delivery_order_analysis" and route
@@ -74,14 +72,23 @@ Routing rules:
 
 Return ONLY valid JSON with exactly these keys:
 {{
-  "target_agents": ["InvoiceAgent" | "PurchaseOrderAgent" | "DeliveryOrderAgent"],
+  "target_agents": ["InvoiceAgent"],
   "reason": "short routing reason",
-  "required_entities": ["invoice_no", ...],
-  "task_type": "invoice_analysis" | "purchase_order_analysis" |
-               "delivery_order_analysis" |
-               "purchase_and_delivery_order_analysis" |
-               "document_matching"
+  "required_entities": ["invoice_no"],
+  "task_type": "invoice_analysis"
 }}
+
+Allowed target_agents values:
+- InvoiceAgent
+- PurchaseOrderAgent
+- DeliveryOrderAgent
+
+Allowed task_type values:
+- invoice_analysis
+- purchase_order_analysis
+- delivery_order_analysis
+- purchase_and_delivery_order_analysis
+- document_matching
 
 User question: {query}
 """.strip()

@@ -17,6 +17,8 @@ _MODELS = [
 ]
 
 _RETRYABLE_CODES = {404, 429, 500, 503}
+DEFAULT_SUMMARY_PREVIEW_ROWS = 20
+MAX_SUMMARY_PREVIEW_ROWS = 200
 
 
 def get_client() -> genai.Client:
@@ -68,6 +70,19 @@ def generate_sql(
     return sql.strip()
 
 
+def _requested_preview_rows(question: str, available_rows: int) -> int:
+    patterns = (
+        r"\b(?:top|first|latest|last|limit|show|list)\s+(\d{1,3})\b",
+        r"\b(\d{1,3})\s+(?:rows?|records?|items?|invoices?|purchase orders?|pos?|delivery orders?|dos?)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, question, flags=re.IGNORECASE)
+        if match:
+            requested = int(match.group(1))
+            return min(max(1, requested), available_rows, MAX_SUMMARY_PREVIEW_ROWS)
+    return min(DEFAULT_SUMMARY_PREVIEW_ROWS, available_rows)
+
+
 def summarize_results(
     client: genai.Client,
     question: str,
@@ -75,7 +90,8 @@ def summarize_results(
     result: dict[str, Any],
     summary_system_prompt: str,
 ) -> str:
-    rows_preview = result["rows"][:20]
+    preview_limit = _requested_preview_rows(question, len(result["rows"]))
+    rows_preview = result["rows"][:preview_limit]
     shown = result["count"]
     total = result["total_count"]
     count_note = (
@@ -83,11 +99,16 @@ def summarize_results(
         if total > shown
         else f"{shown} rows"
     )
+    preview_note = (
+        f"{len(rows_preview)} preview rows supplied to the summarizer"
+        if shown > len(rows_preview)
+        else "all shown rows supplied to the summarizer"
+    )
     prompt = (
         f"{summary_system_prompt}\n\n"
         f"User question: {question}\n\n"
         f"SQL executed:\n{sql}\n\n"
-        f"Query results ({count_note}; TRUE TOTAL matching rows = {total}):\n"
+        f"Query results ({count_note}; {preview_note}; TRUE TOTAL matching rows = {total}):\n"
         f"{json.dumps(rows_preview, indent=2, default=str)}\n\n"
         "Write a concise answer. Use the TRUE TOTAL figure when describing how many "
         "records match. Include key figures and names. "

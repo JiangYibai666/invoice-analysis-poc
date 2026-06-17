@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import AsyncIterator
 from typing import Optional
 
@@ -43,16 +44,16 @@ def _build_summary(data: dict) -> str:
             lines = ["Document matching result:\n"]
 
         if po_match:
-            lines.append(f"PO check: {po_match.get('summary', 'No PO result available.')}")
+            lines.append(f"PO check: {_without_nested_summary(po_match.get('summary', 'No PO result available.'))}")
         if do_match:
-            lines.append(f"DO check: {do_match.get('summary', 'No DO result available.')}")
+            lines.append(f"DO check: {_without_nested_summary(do_match.get('summary', 'No DO result available.'))}")
 
         po_ok = po_match.get("matched") is True if po_match else None
         do_ok = do_match.get("matched") is True if do_match else None
         scope = "all checked invoices" if invoice_numbers else "this invoice"
         review_scope = "all checked invoices are" if invoice_numbers else "this invoice is"
         if po_ok is True and do_ok is True:
-            conclusion = f"In summary: Two-way and three-way document matching passed for {scope}."
+            conclusion = f"In summary: Invoice-to-PO and Invoice-to-DO checks passed for {scope}."
         elif po_ok is True and do_ok is None:
             conclusion = f"In summary: Invoice-to-PO matching passed for {scope}."
         elif do_ok is True and po_ok is None:
@@ -74,6 +75,11 @@ def _build_summary(data: dict) -> str:
         return "\n\n".join(parts) or "No analysis results were returned."
 
     return data.get("summary", "No summary available.")
+
+
+def _without_nested_summary(summary: str) -> str:
+    """Remove a sub-agent's final summary sentence before HostAgent adds its own."""
+    return re.sub(r"\s+In summary:.*$", "", summary).strip()
 
 
 def _document_matching_context(query: str, route: RouteDecision) -> dict:

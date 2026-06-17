@@ -1,67 +1,52 @@
-# 修改报告
+# Change Report
 
-## 背景
+## Prompt/output format fixes
 
-原来的 document matching 流程强依赖用户在问题里明确写出 invoice number。
-如果用户只问“三方匹配”“检查最近几张发票的匹配情况”这类问题，PurchaseOrderAgent
-和 DeliveryOrderAgent 都会因为找不到发票号而返回错误，导致两个 agent 无法正常协作。
+Date: 2026-06-17
 
-## 修改内容
+### 1. Render all markdown tables returned by summaries
 
-1. 修改 `tools/document_match_query.py`
-   - 新增批量匹配默认数量和最大数量限制。
-   - 新增从自然语言中提取批量数量的能力，例如 `latest 5`、`检查最近 5 张发票`。
-   - 新增按最近发票查询候选 invoice number 的方法。
-   - 新增批量 Invoice-to-PO 匹配方法。
-   - 新增批量 Invoice-to-DO 匹配方法。
-   - 批量结果不会携带每一行明细，避免多发票场景下返回数据过大。
+- File changed: `cli/chat.py`
+- Problem: `_render_summary()` only searched for the first markdown table block, so later tables allowed by the summary prompts were not displayed.
+- Change: Reworked `_render_summary()` to iterate over every markdown table block and render text/table segments in their original order.
+- Impact: Multi-table summaries from InvoiceAgent, PurchaseOrderAgent, and DeliveryOrderAgent are no longer silently truncated by the CLI.
 
-2. 修改 `agents/host_agent/graph.py`
-   - HostAgent 在 document matching 请求中检测是否缺少 invoice number。
-   - 如果缺少 invoice number，HostAgent 会先查询一批候选发票号。
-   - HostAgent 会把同一批候选发票号通过 A2A `DataPart` 传给 PO/DO 两个 agent。
-   - 汇总文案支持区分“单张发票匹配”和“多张发票批量匹配”。
+### 2. Make JSON prompt examples valid JSON
 
-3. 修改 `agents/purchase_order_agent/graph.py`
-   - 保留原有单张发票匹配逻辑：问题里有 invoice number 时行为不变。
-   - 当问题里没有 invoice number 时，改为使用 HostAgent 传入的候选发票号做批量 PO 匹配。
-   - 如果 PurchaseOrderAgent 被单独调用且没有 HostAgent 上下文，会自行查询最近发票作为候选。
+- Files changed:
+  - `agents/host_agent/prompts.py`
+  - `agents/purchase_order_agent/prompts.py`
+  - `agents/delivery_order_agent/prompts.py`
+- Problem: Several prompts asked for JSON but showed pseudo-JSON examples using inline union syntax such as `"A" | "B"`, which is not valid JSON.
+- Change: Replaced pseudo-JSON examples with valid JSON objects and moved allowed enum values into separate bullet lists.
+- Impact: The router and task classifiers receive clearer instructions and are less likely to return invalid JSON.
 
-4. 修改 `agents/delivery_order_agent/graph.py`
-   - 保留原有单张发票匹配逻辑：问题里有 invoice number 时行为不变。
-   - 当问题里没有 invoice number 时，改为使用 HostAgent 传入的候选发票号做批量 DO 匹配。
-   - 如果 DeliveryOrderAgent 被单独调用且没有 HostAgent 上下文，会自行查询最近发票作为候选。
+### 3. Dynamically size summary preview rows
 
-## 修改后的行为
+- File changed: `tools/gemini_sql.py`
+- Problem: `summarize_results()` always sent only the first 20 rows to the model, even when the user explicitly requested more rows such as `top 50`.
+- Change: Added `_requested_preview_rows()` to extract requested row counts from the user question and use that count for the summary preview, capped by available rows and the hard query result cap.
+- Impact: When users request a specific larger result count, the summarizer can now see and summarize the requested rows instead of being limited to 20 by default.
 
-- `Check three-way matching for invoice INV-00000001`
-  - 仍然执行原来的单张发票 PO + DO 匹配。
+### 4. Remove forced InvoiceAgent routing for document matching
 
-- `Check three-way matching`
-  - 不再直接报缺少 invoice number。
-  - 系统会默认检查最近 20 张有明细的发票。
+- File changed: `agents/host_agent/prompts.py`
+- Problem: The routing prompt required `InvoiceAgent` to be included for document matching, but the two-way and three-way matching flow is handled by PurchaseOrderAgent and DeliveryOrderAgent, and HostAgent does not consume an InvoiceAgent result in that matching branch.
+- Change: Removed the instruction that always included InvoiceAgent alongside PurchaseOrderAgent or DeliveryOrderAgent for document matching.
+- Impact: The router prompt now better matches the current implementation: invoice-to-PO matching can route to PurchaseOrderAgent, invoice-to-DO matching can route to DeliveryOrderAgent, and three-way matching can route to both matching agents without an unused InvoiceAgent call.
 
-- `Check latest 5 invoices for three-way matching`
-  - 系统会检查最近 5 张有明细的发票。
+### 5. Clarify combined PO/DO matching summary wording
 
-- `检查最近 5 张发票的三方匹配`
-  - 系统会识别中文数量提示，并检查最近 5 张发票。
+- File changed: `agents/host_agent/graph.py`
+- Problem: When both PO and DO checks passed, HostAgent said "Two-way and three-way document matching passed" even though the current deterministic checks are separate Invoice-to-PO and Invoice-to-DO checks, not an additional direct PO-vs-DO consistency check.
+- Change: Updated the combined conclusion to say "Invoice-to-PO and Invoice-to-DO checks passed" and stripped nested sub-agent `In summary:` sentences before HostAgent adds its final summary.
+- Impact: Results for questions such as `Check INV00020608 and its related do and po` now describe exactly what was checked while still showing both PO and DO detail tables.
 
-## 验证
+### 6. Teach LLM agents how to resolve PO-to-DO cross-domain lookups
 
-已完成以下验证：
-
-1. 使用 Python 3.11 编译检查整个项目，确认没有语法错误。
-2. 使用 mock 数据验证 PurchaseOrderAgent：
-   - 缺少 invoice number 但存在候选发票号时，会返回 `po_batch_match`。
-3. 使用 mock 数据验证 DeliveryOrderAgent：
-   - 缺少 invoice number 但存在候选发票号时，会返回 `do_batch_match`。
-4. 使用 mock 数据验证 HostAgent：
-   - 能生成共享的候选发票上下文。
-   - 能正确生成批量 document matching 汇总。
-5. 使用 `git diff --check` 检查格式，没有发现 whitespace 问题。
-
-## 注意事项
-
-- 批量匹配默认检查 20 张发票，最大限制为 50 张，避免一句宽泛问题触发过大的匹配任务。
-- 当前批量匹配内部仍然按发票逐张调用已有确定性匹配逻辑。对 POC 来说足够直接；如果后续要支持大量发票批处理，建议改成 set-based SQL 来提升性能。
+- Files changed:
+  - `agents/delivery_order_agent/prompts.py`
+  - `agents/purchase_order_agent/prompts.py`
+- Problem: For questions such as `Check POGLOBAL00008981 and its related invoice and DO`, PurchaseOrderAgent could describe a DO reference from `public.purchase_order.delivery_order_number`, while DeliveryOrderAgent could fail to find DO records because it was not explicitly told how to resolve a PO global number into DO-side records.
+- Change: Expanded DeliveryOrderAgent's schema context with minimal `public.purchase_order` and `public.po_item` fields, plus join patterns for resolving local/global PO identifiers through `delivery_order_item`, `po_item`, `purchase_order`, and `delivery_order.po_list`. Added SQL prompt guidance to treat `POGLOBAL...`, `PO-...`, and PO UUID values as PO identifiers when the user asks for related DOs. Updated PurchaseOrderAgent's summary guidance to label `delivery_order_number` and `do_status` from `public.purchase_order` as PO-record references/status summaries rather than independently verified DO facts.
+- Impact: Cross-domain PO questions remain LLM-generated SQL flows, but the LLM now has the schema and relationship rules needed to find related DOs from a PO global number and to avoid contradictory source wording.

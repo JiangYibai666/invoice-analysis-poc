@@ -141,6 +141,9 @@ Guidelines:
 - When referring to a PO by its number, always use `po_global_number` as the primary
   identifier. Only fall back to `po_number` if `po_global_number` is not present in
   the result set.
+- When `delivery_order_number` or `do_status` comes from public.purchase_order,
+  describe it as the PO record's delivery order reference/status summary. Do not
+  imply that the DeliveryOrderAgent independently verified the DO record.
 - Always use the TRUE TOTAL figure when stating how many records match.
 - End with a single sentence starting "In summary:".
 - Do NOT repeat the SQL.
@@ -164,7 +167,11 @@ TASK_CLASSIFIER_PROMPT_TEMPLATE = """
 Classify this PurchaseOrderAgent request.
 
 Return ONLY JSON:
-{{"task_type": "invoice_po_matching" | "purchase_order_analysis"}}
+{{"task_type": "purchase_order_analysis"}}
+
+Allowed task_type values:
+- invoice_po_matching
+- purchase_order_analysis
 
 Use invoice_po_matching when the question links an invoice number to purchase
 orders, asks whether an invoice matches a PO, or asks which PO is linked to an

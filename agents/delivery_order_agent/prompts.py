@@ -44,6 +44,22 @@ TABLE public.delivery_order_item
   contract_reference_number    varchar(500)
   over_purchased_qty           boolean
 
+TABLE public.purchase_order
+  id                    bigint PK
+  po_global_number      varchar(255)   preferred unique system-wide PO identifier
+  po_number             varchar(50)    local PO number; often used by DO-side reference fields
+  uuid                  varchar(255)
+  delivery_order_number text           denormalized linked DO number(s) from the PO record
+  do_status             varchar(255)   denormalized delivery status summary from the PO record
+
+TABLE public.po_item
+  id             bigint PK
+  po_id          bigint FK -> public.purchase_order.id
+  item_code      varchar(100)
+  item_name      varchar(255)
+  quantity       numeric(25,12)
+  net_price      numeric(26,2)
+
 TABLE public.suppliers
   id                   bigint PK
   uuid                 varchar(255)
@@ -76,6 +92,22 @@ Common JOIN patterns:
 
   -- cross-reference to PO items:
   JOIN public.po_item poi ON poi.id = doi.po_item_id
+
+  -- delivery orders related to a PO identifier (local PO no, global PO no, or PO uuid):
+  FROM public.delivery_order doo
+  JOIN public.delivery_order_item doi ON doi.delivery_order_id = doo.id
+  LEFT JOIN public.po_item poi ON poi.id = doi.po_item_id
+  LEFT JOIN public.purchase_order po ON po.id = poi.po_id
+  WHERE po.po_global_number = 'X'
+     OR po.po_number = 'X'
+     OR po.uuid = 'X'
+     OR doi.purchase_order_number = 'X'
+     OR doi.purchase_order_number = po.po_number
+     OR doo.po_list ILIKE '%' || po.po_number || '%'
+
+  -- PO record's denormalized DO reference/status summary:
+  FROM public.purchase_order po
+  WHERE po.po_global_number = 'X' OR po.po_number = 'X' OR po.uuid = 'X'
 """.strip()
 
 SQL_SYSTEM_PROMPT = """
@@ -112,7 +144,13 @@ Rules:
 - delivery_order.po_list is a plain text field (may contain one PO number or a
   comma-separated list). Do NOT unnest or split it in aggregates; treat it as an
   opaque text value or use ILIKE/= for matching.
-- Focus only on delivery order data. Do not attempt to answer questions about purchase orders.
+- If the user provides a PO identifier (for example POGLOBAL..., PO-..., or a
+  PO uuid) and asks for related delivery orders, treat it as a PO identifier,
+  not a DO identifier. Resolve related DOs by joining delivery_order_item ->
+  po_item -> purchase_order, matching against po.po_global_number, po.po_number,
+  po.uuid, doi.purchase_order_number, and doo.po_list when useful.
+- Focus on delivery order data. Use purchase_order and po_item only to resolve
+  PO-to-DO relationships, not to perform general purchase order analytics.
 - Supplier names: JOIN public.suppliers s ON s.id = doo.supplier_id, use s.company_name.
 - Buyer names: JOIN public.buyer_information b ON b.id = doo.buyer_id, use b.buyer_name (NOT b.company_name).
 - Prefer readable aliases.
@@ -151,7 +189,11 @@ TASK_CLASSIFIER_PROMPT_TEMPLATE = """
 Classify this DeliveryOrderAgent request.
 
 Return ONLY JSON:
-{{"task_type": "invoice_do_matching" | "delivery_order_analysis"}}
+{{"task_type": "delivery_order_analysis"}}
+
+Allowed task_type values:
+- invoice_do_matching
+- delivery_order_analysis
 
 Use invoice_do_matching when the question links an invoice number to delivery
 orders, asks whether an invoice matches a DO, or asks which DO is linked to an
