@@ -98,12 +98,12 @@ def _connect(params: dict[str, Any]) -> psycopg2.extensions.connection:
 
 
 def list_invoice_numbers_for_matching(limit: int = DEFAULT_BATCH_MATCH_LIMIT) -> list[str]:
-    """Return recent invoice numbers with line items for batch PO/DO matching."""
+    """Return recent invoice global numbers with line items for batch PO/DO matching."""
     limit = min(max(1, int(limit)), MAX_BATCH_MATCH_LIMIT)
     sql = """
-        SELECT i.invoice_no
+        SELECT COALESCE(NULLIF(i.invoice_global_no, ''), i.invoice_no) AS preferred_no
         FROM public.invoice i
-        WHERE i.invoice_no IS NOT NULL
+        WHERE (i.invoice_global_no IS NOT NULL OR i.invoice_no IS NOT NULL)
           AND EXISTS (
               SELECT 1
               FROM public.invoice_item ii
@@ -117,7 +117,7 @@ def list_invoice_numbers_for_matching(limit: int = DEFAULT_BATCH_MATCH_LIMIT) ->
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql, (limit,))
-            return [str(row["invoice_no"]) for row in cur.fetchall()]
+            return [str(row["preferred_no"]) for row in cur.fetchall()]
     finally:
         conn.close()
 
@@ -171,6 +171,7 @@ def _fetch_invoice_lines(invoice_no: str, limit: int) -> list[dict[str, Any]]:
     sql = """
         SELECT
             i.invoice_no,
+            i.invoice_global_no,
             i.invoice_status,
             i.currency_code,
             i.total_amount AS invoice_total_amount,
@@ -195,7 +196,7 @@ def _fetch_invoice_lines(invoice_no: str, limit: int) -> list[dict[str, Any]]:
             ii.do_item_id
         FROM public.invoice i
         LEFT JOIN public.invoice_item ii ON ii.invoice_id = i.id
-        WHERE i.invoice_no = %s
+        WHERE (i.invoice_no = %s OR i.invoice_global_no = %s)
         ORDER BY ii.id
         LIMIT %s
     """
@@ -203,7 +204,7 @@ def _fetch_invoice_lines(invoice_no: str, limit: int) -> list[dict[str, Any]]:
     conn = _connect(_INVOICE_DB_PARAMS)
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, (invoice_no, limit))
+            cur.execute(sql, (invoice_no, invoice_no, limit))
             return [_row_to_dict(row) for row in cur.fetchall()]
     finally:
         conn.close()
@@ -332,8 +333,9 @@ def query_invoice_po_match(invoice_no: str, limit: int = 100) -> dict[str, Any]:
     amount_match = bool(lines) and missing_po_lines == 0 and _abs_lte(amount_variance) is True
     matched = amount_match and mismatched_lines == 0
 
+    display_no = rows[0].get("invoice_global_no") or invoice_no
     summary = (
-        f"Invoice {invoice_no} has {len(lines)} line item(s). "
+        f"Invoice {display_no} has {len(lines)} line item(s). "
         f"{missing_po_lines} line item(s) have no PO reference. "
         f"Invoice line total is {rows[0].get('currency_code') or ''} "
         f"{_format_money(invoice_line_total) if invoice_line_total is not None else 'N/A'}, "
@@ -345,6 +347,7 @@ def query_invoice_po_match(invoice_no: str, limit: int = 100) -> dict[str, Any]:
     return {
         "query_type": "po_match",
         "invoice_no": invoice_no,
+        "invoice_global_no": rows[0].get("invoice_global_no") or invoice_no,
         "found": True,
         "matched": matched,
         "amount_match": amount_match,
@@ -413,8 +416,9 @@ def query_invoice_do_match(invoice_no: str, limit: int = 100) -> dict[str, Any]:
     unknown_lines = sum(1 for line in lines if line.get("quantity_covered") is None)
     matched = bool(lines) and missing_do_lines == 0 and uncovered_lines == 0 and unknown_lines == 0
 
+    display_no = rows[0].get("invoice_global_no") or invoice_no
     summary = (
-        f"Invoice {invoice_no} has {len(lines)} line item(s). "
+        f"Invoice {display_no} has {len(lines)} line item(s). "
         f"{missing_do_lines} line item(s) have no DO reference and "
         f"{uncovered_lines} line item(s) exceed matched DO quantity. "
         "DO records do not carry invoice amounts in the current schema, so this check is quantity-based. "
@@ -424,6 +428,7 @@ def query_invoice_do_match(invoice_no: str, limit: int = 100) -> dict[str, Any]:
     return {
         "query_type": "do_match",
         "invoice_no": invoice_no,
+        "invoice_global_no": rows[0].get("invoice_global_no") or invoice_no,
         "found": True,
         "matched": matched,
         "line_count": len(lines),

@@ -6,8 +6,8 @@ Database: INVOICE_DB (PostgreSQL)
 TABLE public.invoice  (9 289 rows)
   id                      bigint          PK
   uuid                    varchar(255)
-  invoice_no              varchar(255)    the primary invoice number shown to users
-  invoice_global_no       varchar(255)    system-wide global invoice number (may differ from invoice_no)
+  invoice_no              varchar(255)    local invoice number (may repeat across buyers/suppliers)
+  invoice_global_no       varchar(255)    preferred unique system-wide identifier; fewer duplicates than invoice_no
   invoice_type            varchar(255)    e.g. 'STANDARD', 'CLAIM'
   invoice_status          varchar(255)    current workflow state
   payment_status          varchar(255)
@@ -114,6 +114,10 @@ Rules:
   relevant identifier columns using OR, e.g.:
     WHERE i.invoice_no = 'X' OR i.invoice_global_no = 'X' OR i.uuid = 'X'
   This ensures the query works regardless of which identifier the user provided.
+- When displaying invoice identifiers in results, always include `invoice_global_no`
+  as the first/primary identifier column. `invoice_no` may repeat across different
+  buyers or suppliers; `invoice_global_no` is unique system-wide and avoids confusion.
+  Include `invoice_no` as a secondary column only when it adds useful context.
 - Use ILIKE for case-insensitive text filters.
 - For "pending" or "outstanding" invoices use:
     invoice_status NOT IN ('PAID','COMPLETED','REJECTED','CANCELLED','VOID','FAILED')
@@ -139,6 +143,9 @@ executed, and the query results. Write a clear, concise answer.
 Guidelines:
 - Address the user's question directly.
 - Highlight the most important numbers and names.
+- When referring to an invoice by its number, always use `invoice_global_no` as the
+  primary identifier. Only fall back to `invoice_no` if `invoice_global_no` is not
+  present in the result set.
 - For large monetary values use shorthand: 1 000 000 000 → 1.0B, 1 000 000 → 1.0M.
 - Always use the TRUE TOTAL figure (provided explicitly) when stating how many records match.
   Never base the count on the number of rows shown in the sample.

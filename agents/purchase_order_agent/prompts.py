@@ -3,8 +3,8 @@ Database: purchase (PostgreSQL)
 
 TABLE public.purchase_order
   id                      bigint PK
-  po_global_number        varchar(255)
-  po_number               varchar(50)
+  po_global_number        varchar(255)   preferred unique system-wide PO identifier; fewer duplicates
+  po_number               varchar(50)    local PO number (may repeat across buyers/suppliers)
   pr_number               varchar(50)        purchase requisition number
   po_title                varchar(255)
   status                  varchar(50)        PO workflow status
@@ -105,6 +105,10 @@ Rules:
   relevant identifier columns using OR, e.g.:
     WHERE po.po_number = 'X' OR po.po_global_number = 'X' OR po.uuid = 'X'
   This ensures the query works regardless of which identifier the user provided.
+- When displaying PO identifiers in results, always include `po_global_number` as the
+  first/primary identifier column. `po_number` may repeat across different buyers or
+  suppliers; `po_global_number` is unique system-wide and avoids confusion.
+  Include `po_number` as a secondary column only when it adds useful context.
 - Use ILIKE for case-insensitive text filters.
 - Use LIMIT 50 unless the user requests a specific limit.
 - When aggregating amounts, group by currency_code or currency.
@@ -134,6 +138,9 @@ clearly and concisely.
 Guidelines:
 - Address the user's question directly.
 - Highlight important PO numbers, statuses, suppliers, amounts, and quantities.
+- When referring to a PO by its number, always use `po_global_number` as the primary
+  identifier. Only fall back to `po_number` if `po_global_number` is not present in
+  the result set.
 - Always use the TRUE TOTAL figure when stating how many records match.
 - End with a single sentence starting "In summary:".
 - Do NOT repeat the SQL.

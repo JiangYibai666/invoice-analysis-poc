@@ -3,8 +3,8 @@ Database: purchase (PostgreSQL)
 
 TABLE public.delivery_order
   id                    bigint PK
-  delivery_order_number varchar(50)
-  global_do_number      varchar(50)
+  delivery_order_number varchar(50)    local DO number (may repeat across buyers/suppliers)
+  global_do_number      varchar(50)    preferred unique system-wide DO identifier; fewer duplicates
   status                varchar(255)   DO workflow status
   delivery_date         timestamptz
   created_date          timestamptz
@@ -92,6 +92,10 @@ Rules:
   relevant identifier columns using OR, e.g.:
     WHERE doo.delivery_order_number = 'X' OR doo.global_do_number = 'X' OR doo.uuid = 'X'
   This ensures the query works regardless of which identifier the user provided.
+- When displaying DO identifiers in results, always include `global_do_number` as the
+  first/primary identifier column. `delivery_order_number` may repeat across different
+  buyers or suppliers; `global_do_number` is unique system-wide and avoids confusion.
+  Include `delivery_order_number` as a secondary column only when it adds useful context.
 - Use ILIKE for case-insensitive text filters.
 - Use LIMIT 50 unless the user requests a specific limit.
 - Delivery order facts are quantity/status/date based; do not invent amounts.
@@ -121,6 +125,9 @@ query results clearly and concisely.
 Guidelines:
 - Address the user's question directly.
 - Highlight DO numbers, statuses, delivery dates, PO numbers, quantities, and exceptions.
+- When referring to a DO by its number, always use `global_do_number` as the primary
+  identifier. Only fall back to `delivery_order_number` if `global_do_number` is not
+  present in the result set.
 - Always use the TRUE TOTAL figure when stating how many records match.
 - End with a single sentence starting "In summary:".
 - Do NOT repeat the SQL.
