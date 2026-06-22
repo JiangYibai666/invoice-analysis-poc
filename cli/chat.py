@@ -110,20 +110,13 @@ Available queries by category (natural language):
   • "Which DOs are linked to the most PO items?"
   • "List DOs delivered this month"
 
-  ── Document Matching (PurchaseOrderAgent + DeliveryOrderAgent) ───────────────
-  • "Check invoice INV-00000001" and its related PO"  (invoice ↔ PO)
-  • "Does invoice INV-00000001 match its delivery order?"  (invoice ↔ DO)
-  • "Check latest 5 DO, and show me related invoice and PO"  (DO ↔ invoice + PO)
-  • "Is INV-00000002 matched against its PO?"
-  • "Show matching result for invoice INV-00000005"
-
-  ── Batch Document Matching (no specific invoice number needed) ───────────────
-  • "Check latest 5 invoices three-way matching"
-  • "Check invoice-to-PO matching for the last 10 invoices"
-  
   ── Cross-domain Analysis (multiple agents) ───────────────────────────────────
   • "Which 3 suppliers have the most PO and DO?"
   • "Compare PO and DO counts by supplier"
+  • "Check INV000XXXXX and its related PO and DO"
+  • "Show me the details of POGLOBAL000XXXXX and its related invoice and DO"
+  • "What is the status of DOGLOBAL000XXXXX and its linked PO?"
+  • "Does INV000XXXXX have a delivery order? Show me the DO details"
 
 Type 'help' to show this message, 'exit' to quit.
 """.strip()
@@ -222,59 +215,7 @@ def _render_report(report: dict) -> None:
         summary_text = summary
     _render_summary(summary_text, title)
 
-    if qtype == "document_matching":
-        po_match = raw.get("po_match", {})
-        do_match = raw.get("do_match", {})
-
-        po_lines = po_match.get("lines", [])
-        if po_lines:
-            tbl = Table(title="Invoice to PO Matching", show_lines=True)
-            tbl.add_column("Invoice Item", justify="right", style="cyan")
-            tbl.add_column("Item")
-            tbl.add_column("PO No")
-            tbl.add_column("Inv Net", justify="right")
-            tbl.add_column("PO Net", justify="right")
-            tbl.add_column("Variance", justify="right")
-            tbl.add_column("Match")
-            for line in po_lines[:20]:
-                tbl.add_row(
-                    str(line.get("invoice_item_id") or ""),
-                    str(line.get("item_name") or line.get("item_code") or ""),
-                    str(line.get("po_number") or line.get("invoice_item_po_number") or ""),
-                    f"{float(line['invoice_net_price']):,.2f}" if line.get("invoice_net_price") is not None else "",
-                    f"{float(line['matched_po_net_price']):,.2f}" if line.get("matched_po_net_price") is not None else "",
-                    f"{float(line['net_amount_variance']):,.2f}" if line.get("net_amount_variance") is not None else "",
-                    "yes" if line.get("net_amount_match") is True else "no",
-                )
-            console.print(tbl)
-        elif po_match.get("results"):
-            _render_batch_match_results(po_match)
-
-        do_lines = do_match.get("lines", [])
-        if do_lines:
-            tbl = Table(title="Invoice to DO Matching", show_lines=True)
-            tbl.add_column("Invoice Item", justify="right", style="cyan")
-            tbl.add_column("Item")
-            tbl.add_column("DO No")
-            tbl.add_column("Inv Qty", justify="right")
-            tbl.add_column("DO Qty", justify="right")
-            tbl.add_column("Variance", justify="right")
-            tbl.add_column("Covered")
-            for line in do_lines[:20]:
-                tbl.add_row(
-                    str(line.get("invoice_item_id") or ""),
-                    str(line.get("item_name") or line.get("item_code") or ""),
-                    str(line.get("delivery_order_number") or line.get("invoice_item_do_number") or ""),
-                    f"{float(line['invoice_qty']):,.4f}" if line.get("invoice_qty") is not None else "",
-                    f"{float(line['matched_do_quantity']):,.4f}" if line.get("matched_do_quantity") is not None else "",
-                    f"{float(line['quantity_variance']):,.4f}" if line.get("quantity_variance") is not None else "",
-                    "yes" if line.get("quantity_covered") is True else "no",
-                )
-            console.print(tbl)
-        elif do_match.get("results"):
-            _render_batch_match_results(do_match)
-
-    elif qtype == "multi_agent_analysis":
+    if qtype == "multi_agent_analysis":
         for agent_name, agent_data in raw.get("agent_results", {}).items():
             cols = agent_data.get("columns") or []
             agent_rows = agent_data.get("rows") or []
@@ -293,63 +234,6 @@ def _render_report(report: dict) -> None:
             display_cols = raw.get("display_columns") or None
             row_lim = _display_row_count(query, len(agent_rows))
             _render_db_result_table(cols, agent_rows, "Query Results", display_cols, row_lim)
-
-
-def _render_batch_match_results(match: dict) -> None:
-    """Render per-invoice rows from a po_batch_match or do_batch_match result."""
-    results = match.get("results", [])
-    if not results:
-        return
-
-    is_po = "po" in match.get("query_type", "")
-    title = "Invoice-to-PO Batch Matching" if is_po else "Invoice-to-DO Batch Matching"
-    tbl = Table(title=title, show_lines=True)
-    tbl.add_column("Invoice No", style="cyan")
-    tbl.add_column("Found")
-    tbl.add_column("Result")
-    tbl.add_column("Lines", justify="right")
-    if is_po:
-        tbl.add_column("Missing PO", justify="right")
-        tbl.add_column("Mismatched", justify="right")
-        tbl.add_column("Inv Total", justify="right")
-        tbl.add_column("PO Total", justify="right")
-        tbl.add_column("Variance", justify="right")
-    else:
-        tbl.add_column("Missing DO", justify="right")
-        tbl.add_column("Uncovered", justify="right")
-
-    for r in results:
-        inv_no = str(r.get("invoice_no") or "")
-        found = "yes" if r.get("found") else "no"
-        if not r.get("found"):
-            result_cell = "not found"
-        elif r.get("matched"):
-            result_cell = "[green]pass[/green]"
-        else:
-            result_cell = "[red]review[/red]"
-        lines = str(r.get("line_count") or 0)
-        if is_po:
-            tbl.add_row(
-                inv_no,
-                found,
-                result_cell,
-                lines,
-                str(r.get("missing_po_lines") or 0),
-                str(r.get("mismatched_lines") or 0),
-                f"{float(r['invoice_line_total']):,.2f}" if r.get("invoice_line_total") is not None else "",
-                f"{float(r['po_line_total']):,.2f}" if r.get("po_line_total") is not None else "",
-                f"{float(r['amount_variance']):,.2f}" if r.get("amount_variance") is not None else "",
-            )
-        else:
-            tbl.add_row(
-                inv_no,
-                found,
-                result_cell,
-                lines,
-                str(r.get("missing_do_lines") or 0),
-                str(r.get("uncovered_lines") or 0),
-            )
-    console.print(tbl)
 
 
 def _display_routing(message: str) -> None:

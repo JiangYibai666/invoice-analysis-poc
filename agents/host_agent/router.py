@@ -23,7 +23,6 @@ _VALID_TASK_TYPES = {
     "purchase_order_analysis",
     "delivery_order_analysis",
     "purchase_and_delivery_order_analysis",
-    "document_matching",
 }
 
 # Keyword hints used as a last-resort fallback when the LLM returns no valid agents.

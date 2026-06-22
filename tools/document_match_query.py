@@ -444,6 +444,29 @@ def _without_lines(result: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in result.items() if key != "lines"}
 
 
+def get_invoice_linked_refs(invoice_no: str) -> dict[str, list[str]]:
+    """Return the PO and DO numbers linked to an invoice via invoice_item fields.
+
+    Used by HostAgent to enrich cross-domain queries so that PO/DO agents can
+    generate accurate SQL even though they have no access to the invoice database.
+    """
+    try:
+        lines = _fetch_invoice_lines(invoice_no, 100)
+    except Exception:  # noqa: BLE001
+        return {"po_numbers": [], "do_numbers": []}
+    po_numbers = sorted({
+        str(l["invoice_item_po_number"])
+        for l in lines
+        if l.get("invoice_item_po_number")
+    })
+    do_numbers = sorted({
+        str(l["invoice_item_do_number"])
+        for l in lines
+        if l.get("invoice_item_do_number")
+    })
+    return {"po_numbers": po_numbers, "do_numbers": do_numbers}
+
+
 def _batch_summary(
     label: str,
     invoice_numbers: list[str],

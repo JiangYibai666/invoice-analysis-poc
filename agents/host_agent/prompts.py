@@ -34,35 +34,24 @@ Available agents:
 Routing rules:
 - Use InvoiceAgent for invoice data, invoice amounts, invoice status, payment status,
   and supplier or buyer analytics that are directly about invoice records.
-- Use PurchaseOrderAgent for purchase order / PO analytics and invoice-to-PO matching.
+- Use PurchaseOrderAgent for purchase order / PO analytics.
   Also use PurchaseOrderAgent when the question asks which suppliers have the most POs
   or highest PO value (even if framed as a supplier question).
-- Use DeliveryOrderAgent for delivery order / DO analytics and invoice-to-DO matching.
+- Use DeliveryOrderAgent for delivery order / DO analytics.
   Also use DeliveryOrderAgent when the question asks which suppliers have the most DOs
   or highest DO value (even if framed as a supplier question).
 - Do NOT route to InvoiceAgent for questions that are purely about PO or DO records.
-- DOCUMENT MATCHING rules (task_type must be "document_matching"):
-    * Only use document_matching when the user explicitly wants to VERIFY or AUDIT
-      an invoice against its PO or DO AND provides a specific invoice number
-      (e.g. "does INV-00000001 match its PO?", "check three-way matching for INV-XXXXX").
-    * If the user wants invoice-to-PO or invoice-to-DO matching but provides NO
-      specific invoice number, do NOT use document_matching. Instead use
-      task_type "purchase_order_analysis" or "delivery_order_analysis" and route
-      to [InvoiceAgent, PurchaseOrderAgent] or [InvoiceAgent, DeliveryOrderAgent]
-      respectively. Each agent will independently SQL-query its own domain.
-- CROSS-DOMAIN LOOKUP rules (NOT document_matching):
-    * If the user asks to look up a specific PO by its PO number or global PO number
-      and also wants related DO or invoice data, select ALL relevant agents
-      [PurchaseOrderAgent, DeliveryOrderAgent, InvoiceAgent] with task_type
-      "purchase_and_delivery_order_analysis". Each agent will independently
-      query its own domain.
-    * If the user asks about a DO and its related PO or invoice data, same rule applies.
-    * "Related invoice" without an explicit invoice number is NOT document_matching;
-      it means InvoiceAgent should run a SQL query to find invoices linked to that PO/DO.
-- For two-way invoice-to-PO matching, select PurchaseOrderAgent.
-- For two-way invoice-to-DO matching, select DeliveryOrderAgent.
-- For three-way matching (invoice vs PO and DO), select both PurchaseOrderAgent
-  and DeliveryOrderAgent.
+- INVOICE-LINKED LOOKUPS (no document_matching task type):
+    * If the user provides an invoice number and asks for its related PO, route to
+      InvoiceAgent + PurchaseOrderAgent with task_type "purchase_order_analysis".
+    * If the user provides an invoice number and asks for its related DO, route to
+      InvoiceAgent + DeliveryOrderAgent with task_type "delivery_order_analysis".
+    * If the user provides an invoice number and asks for both PO and DO, route to
+      InvoiceAgent + PurchaseOrderAgent + DeliveryOrderAgent with task_type
+      "purchase_and_delivery_order_analysis".
+    * Always include InvoiceAgent when the question is anchored on a specific
+      invoice number, so that the invoice's own details are also displayed.
+    * Each agent will run its own SQL query to find records linked to that invoice.
 - If the user asks to compare or summarize both PO and DO records (no invoice
   verification), select both PurchaseOrderAgent and DeliveryOrderAgent.
 - If the question is ambiguous, pick the single most relevant agent based on key
@@ -88,7 +77,6 @@ Allowed task_type values:
 - purchase_order_analysis
 - delivery_order_analysis
 - purchase_and_delivery_order_analysis
-- document_matching
 
 User question: {query}
 """.strip()

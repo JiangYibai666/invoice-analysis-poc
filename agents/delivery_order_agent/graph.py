@@ -1,66 +1,13 @@
 from __future__ import annotations
 
-import json
-import re
-
-from a2a.types import Artifact, DataPart, Message, Part
+from a2a.types import Artifact, DataPart, Message
 from agents.delivery_order_agent.prompts import (
     DO_SCHEMA_CONTEXT,
     SQL_SYSTEM_PROMPT,
     SUMMARY_SYSTEM_PROMPT,
-    TASK_CLASSIFIER_PROMPT_TEMPLATE,
 )
-from tools.document_match_query import (
-    extract_invoice_no,
-    extract_requested_limit,
-    list_invoice_numbers_for_matching,
-    query_invoice_do_batch_match,
-    query_invoice_do_match,
-)
-from tools.gemini_sql import generate_content, generate_sql, get_client, select_display_columns, summarize_results
+from tools.gemini_sql import generate_sql, get_client, select_display_columns, summarize_results
 from tools.sql_query import execute_safe_sql, purchase_db_params
-
-
-def _route_task_type(parts: list[Part]) -> str | None:
-    data = _route_data(parts)
-    task_type = data.get("route_task_type")
-    return str(task_type) if task_type else None
-
-
-def _route_data(parts: list[Part]) -> dict:
-    for part in parts:
-        if getattr(part, "type", "") == "data":
-            return part.data
-    return {}
-
-
-def _route_invoice_numbers(parts: list[Part]) -> list[str]:
-    raw = _route_data(parts).get("route_invoice_numbers", [])
-    if not isinstance(raw, list):
-        return []
-    return [str(v) for v in raw if v]
-
-
-def _extract_json(text: str) -> dict:
-    stripped = text.strip()
-    stripped = re.sub(r"^```(?:json)?\s*\n?", "", stripped, flags=re.IGNORECASE)
-    stripped = re.sub(r"\n?```\s*$", "", stripped)
-    try:
-        return json.loads(stripped)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
-        if not match:
-            raise ValueError(f"DO classifier did not return JSON: {text}") from None
-        return json.loads(match.group(0))
-
-
-def _classify_task(query: str) -> str:
-    prompt = TASK_CLASSIFIER_PROMPT_TEMPLATE.format(query=query)
-    payload = _extract_json(generate_content(get_client(), prompt))
-    task_type = str(payload.get("task_type") or "")
-    if task_type not in {"invoice_do_matching", "delivery_order_analysis"}:
-        raise ValueError(f"Invalid DO task_type: {task_type}")
-    return task_type
 
 
 def run_delivery_order_graph(message: Message) -> Artifact:
@@ -69,53 +16,22 @@ def run_delivery_order_graph(message: Message) -> Artifact:
     )
 
     try:
-        routed_task = _route_task_type(message.parts)
-        if routed_task == "document_matching":
-            task_type = "invoice_do_matching"
-        elif routed_task in {"delivery_order_analysis", "purchase_and_delivery_order_analysis"}:
-            task_type = "delivery_order_analysis"
-        else:
-            task_type = None
-        task_type = task_type or _classify_task(query_text)
-
-        if task_type == "invoice_do_matching":
-            invoice_no = extract_invoice_no(query_text)
-            if invoice_no:
-                data = query_invoice_do_match(invoice_no)
-            else:
-                invoice_numbers = _route_invoice_numbers(message.parts)
-                if not invoice_numbers:
-                    # Only run batch when user explicitly requested N invoices
-                    requested = extract_requested_limit(query_text, default=0)
-                    if requested > 0:
-                        invoice_numbers = list_invoice_numbers_for_matching(requested)
-                if invoice_numbers:
-                    data = query_invoice_do_batch_match(invoice_numbers)
-                else:
-                    data = {
-                        "query_type": "delivery_order_error",
-                        "query": query_text,
-                        "error": "No invoice number found in the question.",
-                        "summary": "Please provide an invoice number to run Invoice-to-DO matching (e.g. INV-00000001).",
-                    }
-            data["query"] = query_text
-        else:
-            client = get_client()
-            sql = generate_sql(client, query_text, DO_SCHEMA_CONTEXT, SQL_SYSTEM_PROMPT)
-            result = execute_safe_sql(sql, purchase_db_params())
-            summary = summarize_results(client, query_text, sql, result, SUMMARY_SYSTEM_PROMPT)
-            display_columns = select_display_columns(client, query_text, result["columns"])
-            data = {
-                "query_type": "delivery_order_analysis",
-                "query": query_text,
-                "sql": sql,
-                "columns": result["columns"],
-                "rows": result["rows"],
-                "count": result["count"],
-                "total_count": result["total_count"],
-                "display_columns": display_columns,
-                "summary": summary,
-            }
+        client = get_client()
+        sql = generate_sql(client, query_text, DO_SCHEMA_CONTEXT, SQL_SYSTEM_PROMPT)
+        result = execute_safe_sql(sql, purchase_db_params())
+        summary = summarize_results(client, query_text, sql, result, SUMMARY_SYSTEM_PROMPT)
+        display_columns = select_display_columns(client, query_text, result["columns"])
+        data = {
+            "query_type": "delivery_order_analysis",
+            "query": query_text,
+            "sql": sql,
+            "columns": result["columns"],
+            "rows": result["rows"],
+            "count": result["count"],
+            "total_count": result["total_count"],
+            "display_columns": display_columns,
+            "summary": summary,
+        }
     except Exception as exc:  # noqa: BLE001
         data = {
             "query_type": "delivery_order_error",

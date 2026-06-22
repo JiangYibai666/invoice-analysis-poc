@@ -11,11 +11,7 @@ from a2a.client import A2AClient
 from a2a.types import Artifact, DataPart, Message, TaskEvent, TaskRequest, TaskState, TextPart
 from agents.host_agent.router import RouteDecision, route_query
 from storage.task_store import create_session, finalize_session
-from tools.document_match_query import (
-    extract_invoice_no,
-    extract_requested_limit,
-    list_invoice_numbers_for_matching,
-)
+from tools.document_match_query import extract_invoice_no, get_invoice_linked_refs
 
 
 def _extract_data(artifact: Optional[Artifact]) -> dict:
@@ -44,44 +40,8 @@ def _split_at_summary(text: str) -> tuple[str, str]:
     return text.strip(), ""
 
 def _build_summary(data: dict) -> str:
-    """Produce a concise human-readable summary from InvoiceAgent's result."""
+    """Produce a concise human-readable summary from an agent's result."""
     qtype = data.get("query_type", "unknown")
-
-    if qtype == "document_matching":
-        invoice_numbers = data.get("invoice_numbers") or []
-        invoice_no = data.get("invoice_no")
-        po_match = data.get("po_match", {})
-        do_match = data.get("do_match", {})
-        if invoice_no:
-            lines = [f"Document matching result for invoice {invoice_no}:\n"]
-        elif invoice_numbers:
-            lines = [f"Document matching result for {len(invoice_numbers)} invoice(s):\n"]
-        else:
-            lines = ["Document matching result:\n"]
-
-        if po_match:
-            lines.append(f"PO check: {_without_nested_summary(po_match.get('summary', 'No PO result available.'))}")
-        if do_match:
-            lines.append(f"DO check: {_without_nested_summary(do_match.get('summary', 'No DO result available.'))}")
-
-        po_ok = po_match.get("matched") is True if po_match else None
-        do_ok = do_match.get("matched") is True if do_match else None
-        scope = "all checked invoices" if invoice_numbers else "this invoice"
-        review_scope = "all checked invoices are" if invoice_numbers else "this invoice is"
-        if po_ok is True and do_ok is True:
-            conclusion = f"In summary: Invoice-to-PO and Invoice-to-DO checks passed for {scope}."
-        elif po_ok is True and do_ok is None:
-            conclusion = f"In summary: Invoice-to-PO matching passed for {scope}."
-        elif do_ok is True and po_ok is None:
-            conclusion = f"In summary: Invoice-to-DO matching passed for {scope}."
-        elif po_ok is True:
-            conclusion = "In summary: Invoice-to-PO matching passed, but Invoice-to-DO matching needs review."
-        elif do_ok is True:
-            conclusion = "In summary: Invoice-to-DO matching passed, but Invoice-to-PO matching needs review."
-        else:
-            conclusion = f"In summary: Document matching needs review before {review_scope} treated as matched."
-        lines.append(f"\n{conclusion}")
-        return "\n".join(lines)
 
     if qtype == "multi_agent_analysis":
         sections: list[str] = []
@@ -102,34 +62,35 @@ def _build_summary(data: dict) -> str:
     return data.get("summary", "No summary available.")
 
 
-def _without_nested_summary(summary: str) -> str:
-    """Remove a sub-agent's final summary sentence before HostAgent adds its own."""
-    return re.sub(r"\s+In summary:.*$", "", summary).strip()
+def _augment_query_with_refs(query: str, route: RouteDecision) -> str:
+    """When the query contains an invoice number and routes to PO/DO agents,
+    resolve the invoice's linked PO and DO numbers from the invoice DB and
+    append them as context so the sub-agents can build accurate SQL.
 
-
-def _document_matching_context(query: str, route: RouteDecision) -> dict:
-    """Return batch invoice context only when the user explicitly requests N invoices."""
-    if route["task_type"] != "document_matching" or extract_invoice_no(query):
-        return {}
-    # Only build batch context when the user explicitly mentions a quantity
-    # (e.g. "last 10 invoices"). Never silently default to 20.
-    limit_str_patterns = (
-        r"\b(?:top|first|latest|last|limit|show|list|check)\s+\d{1,3}\b",
-        r"\b\d{1,3}\s+(?:invoices?|records?)\b",
-    )
-    import re as _re
-    is_explicit_batch = any(
-        _re.search(p, query, flags=_re.IGNORECASE) for p in limit_str_patterns
-    )
-    if not is_explicit_batch:
-        return {}
-    limit = extract_requested_limit(query)
-    invoice_numbers = list_invoice_numbers_for_matching(limit)
-    return {
-        "route_missing_invoice_no": True,
-        "route_batch_limit": limit,
-        "route_invoice_numbers": invoice_numbers,
-    }
+    PO/DO agents have no access to the invoice database, so without this they
+    cannot resolve an invoice number to a matching PO or DO record.
+    """
+    invoice_no = extract_invoice_no(query)
+    if not invoice_no:
+        return query
+    agents = set(route["target_agents"])
+    needs_po = "PurchaseOrderAgent" in agents
+    needs_do = "DeliveryOrderAgent" in agents
+    if not (needs_po or needs_do):
+        return query
+    refs = get_invoice_linked_refs(invoice_no)
+    additions: list[str] = []
+    if needs_po and refs["po_numbers"]:
+        additions.append(
+            f"Invoice {invoice_no} is linked to PO number(s): {', '.join(refs['po_numbers'])}."
+        )
+    if needs_do and refs["do_numbers"]:
+        additions.append(
+            f"Invoice {invoice_no} is linked to DO number(s): {', '.join(refs['do_numbers'])}."
+        )
+    if not additions:
+        return query
+    return query + " [Context: " + " ".join(additions) + "]"
 
 
 async def _send_to_agent(
@@ -138,15 +99,12 @@ async def _send_to_agent(
     query: str,
     target_agent: str,
     route: RouteDecision,
-    extra_context: dict | None = None,
 ) -> dict:
     route_data = {
         "route_task_type": route["task_type"],
         "route_target_agents": route["target_agents"],
         "route_reason": route["reason"],
     }
-    if extra_context:
-        route_data.update(extra_context)
 
     req = TaskRequest(
         session_id=session_id,
@@ -166,31 +124,14 @@ async def _send_to_agent(
 
 async def _dispatch_route(client: A2AClient, session_id: str, query: str, route: RouteDecision) -> dict:
     target_agents = route["target_agents"]
-    extra_context = _document_matching_context(query, route)
+    augmented_query = _augment_query_with_refs(query, route)
     results = await asyncio.gather(
         *(
-            _send_to_agent(client, session_id, query, agent_name, route, extra_context)
+            _send_to_agent(client, session_id, augmented_query, agent_name, route)
             for agent_name in target_agents
         )
     )
     by_agent = dict(zip(target_agents, results))
-
-    if route["task_type"] == "document_matching":
-        invoice_numbers = extra_context.get("route_invoice_numbers", [])
-        return {
-            "query_type": "document_matching",
-            "query": query,
-            "invoice_no": (
-                by_agent.get("PurchaseOrderAgent", {}).get("invoice_no")
-                or by_agent.get("DeliveryOrderAgent", {}).get("invoice_no")
-                or extract_invoice_no(query)
-            ),
-            "invoice_numbers": invoice_numbers,
-            "missing_invoice_no": bool(extra_context.get("route_missing_invoice_no")),
-            "po_match": by_agent.get("PurchaseOrderAgent", {}),
-            "do_match": by_agent.get("DeliveryOrderAgent", {}),
-            "route": route,
-        }
 
     if len(target_agents) == 1:
         data = results[0]
