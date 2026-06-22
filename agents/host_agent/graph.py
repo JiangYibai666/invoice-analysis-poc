@@ -27,6 +27,22 @@ def _extract_data(artifact: Optional[Artifact]) -> dict:
     return {}
 
 
+def _split_at_summary(text: str) -> tuple[str, str]:
+    """Split an agent summary into (body, summary_sentence).
+
+    'body'  — descriptive text before 'In summary:'.
+    'summary_sentence' — the 'In summary: …' sentence (first line only).
+
+    Everything after the summary sentence (table-heading lines, markdown tables)
+    is discarded because the CLI now renders raw DB tables instead.
+    """
+    match = re.search(r"\bIn summary:[^\n]*", text)
+    if match:
+        body = text[:match.start()].strip()
+        summary_sentence = match.group(0).strip()
+        return body, summary_sentence
+    return text.strip(), ""
+
 def _build_summary(data: dict) -> str:
     """Produce a concise human-readable summary from InvoiceAgent's result."""
     qtype = data.get("query_type", "unknown")
@@ -68,11 +84,20 @@ def _build_summary(data: dict) -> str:
         return "\n".join(lines)
 
     if qtype == "multi_agent_analysis":
-        parts = []
+        sections: list[str] = []
+        bullets: list[str] = []
         for agent_name, agent_data in data.get("agent_results", {}).items():
-            summary = agent_data.get("summary", "No summary available.")
-            parts.append(f"{agent_name}: {summary}")
-        return "\n\n".join(parts) or "No analysis results were returned."
+            raw = agent_data.get("summary", "No summary available.")
+            body, sentence = _split_at_summary(raw)
+            if body:
+                sections.append(f"{agent_name}:\n{body}")
+            if sentence:
+                content = re.sub(r"^In summary:\s*", "", sentence)
+                bullets.append(f"- {agent_name}: {content}")
+        combined = "\n\n".join(sections)
+        if bullets:
+            combined += "\n\nIn summary:\n" + "\n".join(bullets)
+        return combined or "No analysis results were returned."
 
     return data.get("summary", "No summary available.")
 

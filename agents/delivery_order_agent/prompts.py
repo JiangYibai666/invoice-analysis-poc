@@ -118,8 +118,10 @@ Rules:
 - Output ONLY the SQL statement.
 - Use only SELECT. CTEs (WITH clauses) are permitted and preferred for complex queries.
 - Always qualify table names with public. (e.g. public.delivery_order).
-- NEVER prefix a table alias with public. — aliases are plain identifiers (e.g. write
-  "FROM public.delivery_order doo" NOT "FROM public.delivery_order public.doo").
+- NEVER prefix a table alias with public. — aliases are plain identifiers anywhere in
+  the query (FROM, SELECT, WHERE, JOIN ON). Write `doo.global_do_number` NOT
+  `public.doo.global_do_number`; write `FROM public.delivery_order doo` NOT
+  `FROM public.delivery_order public.doo`.
 - When filtering by a DO identifier supplied by the user, match against ALL
   relevant identifier columns using OR, e.g.:
     WHERE doo.delivery_order_number = 'X' OR doo.global_do_number = 'X' OR doo.uuid = 'X'

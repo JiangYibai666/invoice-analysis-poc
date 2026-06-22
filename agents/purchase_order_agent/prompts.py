@@ -99,8 +99,10 @@ Rules:
 - Output ONLY the SQL statement.
 - Use only SELECT. CTEs (WITH clauses) are permitted and preferred for complex queries.
 - Always qualify table names with public. (e.g. public.purchase_order).
-- NEVER prefix a table alias with public. — aliases are plain identifiers (e.g. write
-  "FROM public.purchase_order po" NOT "FROM public.purchase_order public.po").
+- NEVER prefix a table alias with public. — aliases are plain identifiers anywhere in
+  the query (FROM, SELECT, WHERE, JOIN ON). Write `po.po_global_number` NOT
+  `public.po.po_global_number`; write `FROM public.purchase_order po` NOT
+  `FROM public.purchase_order public.po`.
 - When filtering by a PO identifier supplied by the user, match against ALL
   relevant identifier columns using OR, e.g.:
     WHERE po.po_number = 'X' OR po.po_global_number = 'X' OR po.uuid = 'X'

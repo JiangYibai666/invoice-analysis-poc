@@ -46,6 +46,11 @@ def _render_summary(text: str, title: str) -> None:
             printed_panel = True
 
 
+def _strip_markdown_tables(text: str) -> str:
+    """Remove markdown table blocks from text, leaving surrounding prose."""
+    return re.sub(r"\n?(?:\|[^\n]+\|\n?)+", "\n", text).strip()
+
+
 def _render_markdown_table(md: str) -> None:
     """Parse a GitHub-flavoured markdown table string and render it with rich."""
     lines = [ln.strip() for ln in md.splitlines() if ln.strip()]
@@ -124,13 +129,98 @@ Type 'help' to show this message, 'exit' to quit.
 """.strip()
 
 
+def _strip_post_summary_content(text: str) -> str:
+    """Keep everything up to and including the 'In summary:' sentence.
+
+    Discards table heading lines and markdown tables that the LLM places after
+    'In summary:', since the CLI renders raw DB tables separately instead.
+    Falls back to stripping bare markdown tables when there is no 'In summary:'.
+    """
+    match = re.search(r"\bIn summary:[^\n]*", text)
+    if match:
+        return text[:match.end()].strip()
+    return _strip_markdown_tables(text)
+
+
+_DISPLAY_ROW_DEFAULT = 20
+_DISPLAY_ROW_MAX = 200
+
+
+def _display_row_count(query: str, available: int) -> int:
+    """Return how many rows to show in a DB result table.
+
+    Defaults to 20.  Respects an explicit count in the query
+    (e.g. 'top 50') or 'show all' / 'list all'.
+    """
+    if re.search(
+        r"\b(?:show|list|display)\s+all\b|\ball\s+(?:records?|rows?|results?)\b",
+        query,
+        re.IGNORECASE,
+    ):
+        return min(available, _DISPLAY_ROW_MAX)
+    patterns = (
+        r"\b(?:top|first|latest|last|limit|show|list)\s+(\d{1,3})\b",
+        r"\b(\d{1,3})\s+(?:rows?|records?|items?|invoices?|purchase\s+orders?|delivery\s+orders?)\b",
+    )
+    for pattern in patterns:
+        m = re.search(pattern, query, re.IGNORECASE)
+        if m:
+            return min(max(1, int(m.group(1))), available, _DISPLAY_ROW_MAX)
+    return min(_DISPLAY_ROW_DEFAULT, available)
+
+
+def _render_db_result_table(
+    columns: list[str],
+    rows: list[dict],
+    title: str,
+    display_columns: list[str] | None = None,
+    row_limit: int | None = None,
+) -> None:
+    """Render raw DB query result columns/rows as a Rich table.
+
+    If *display_columns* is provided (LLM-selected subset), only those columns
+    are shown so the table fits comfortably in the terminal.
+    *row_limit* caps how many rows are shown; defaults to _DISPLAY_ROW_DEFAULT.
+    """
+    if not columns or not rows:
+        return
+    show_cols = display_columns if display_columns else columns
+    # Keep only names that actually exist in the result set
+    show_cols = [c for c in show_cols if c in columns] or columns
+    cap = row_limit if row_limit is not None else _DISPLAY_ROW_DEFAULT
+    display_rows = rows[:cap]
+    tbl = Table(title=title, show_lines=True)
+    for col in show_cols:
+        tbl.add_column(str(col))
+    for row in display_rows:
+        tbl.add_row(*[str(row.get(col, "")) if row.get(col) is not None else "" for col in show_cols])
+    console.print(tbl)
+    if len(rows) > cap:
+        console.print(f"[dim]... {len(rows) - cap} more row(s) not shown[/dim]")
+
+
 def _render_report(report: dict) -> None:
     qtype = report.get("query_type", "unknown")
     summary = report.get("summary", "")
     raw = report.get("raw_data", {})
 
     title = f"[bold cyan]Invoice Analysis — {qtype}[/bold cyan]"
-    _render_summary(summary, title)
+    query = report.get("query", "")
+    # Analysis types that render a raw DB table: strip any LLM-generated tables
+    # and their heading lines from the summary text to avoid duplicates.
+    _analysis_qtypes = {"invoice_analysis", "purchase_order_analysis", "delivery_order_analysis"}
+    has_db_rows = bool(raw.get("columns") and raw.get("rows"))
+    if qtype == "multi_agent_analysis":
+        # _build_summary already formats the multi-agent text correctly (no trailing
+        # tables).  Only strip any stray bare markdown tables as a safety net.
+        summary_text = _strip_markdown_tables(summary)
+    elif qtype in _analysis_qtypes and has_db_rows:
+        # Single-agent: remove the LLM's embedded table and its heading line,
+        # keeping the prose body and the "In summary:" sentence.
+        summary_text = _strip_post_summary_content(summary)
+    else:
+        summary_text = summary
+    _render_summary(summary_text, title)
 
     if qtype == "document_matching":
         po_match = raw.get("po_match", {})
@@ -184,8 +274,25 @@ def _render_report(report: dict) -> None:
         elif do_match.get("results"):
             _render_batch_match_results(do_match)
 
+    elif qtype == "multi_agent_analysis":
+        for agent_name, agent_data in raw.get("agent_results", {}).items():
+            cols = agent_data.get("columns") or []
+            agent_rows = agent_data.get("rows") or []
+            if cols and agent_rows:
+                display_cols = agent_data.get("display_columns") or None
+                row_lim = _display_row_count(query, len(agent_rows))
+                _render_db_result_table(cols, agent_rows, f"{agent_name} — Query Results", display_cols, row_lim)
+
     elif qtype.endswith("_error") or qtype == "error":
         console.print(f"[bold red]Error:[/bold red] {raw.get('error', 'Unknown error')}")
+
+    else:
+        cols = raw.get("columns") or []
+        agent_rows = raw.get("rows") or []
+        if cols and agent_rows:
+            display_cols = raw.get("display_columns") or None
+            row_lim = _display_row_count(query, len(agent_rows))
+            _render_db_result_table(cols, agent_rows, "Query Results", display_cols, row_lim)
 
 
 def _render_batch_match_results(match: dict) -> None:

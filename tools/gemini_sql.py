@@ -115,3 +115,37 @@ def summarize_results(
         'End with a single sentence starting "In summary:".'
     )
     return generate_content(client, prompt)
+
+
+def select_display_columns(
+    client: genai.Client,
+    question: str,
+    columns: list[str],
+    max_cols: int = 7,
+) -> list[str]:
+    """Return the most relevant column names to display for the user's question.
+
+    If the result already has few columns, returns them unchanged.  Otherwise
+    makes a small LLM call to pick the most useful subset.
+    """
+    if len(columns) <= max_cols:
+        return columns
+    prompt = (
+        f"The user asked: {question}\n\n"
+        f"A database query returned these columns: {json.dumps(columns)}\n\n"
+        f"Select the {max_cols} column names that are most useful for answering "
+        "the user's question. Return ONLY a JSON array of column name strings, "
+        'e.g. ["col1", "col2"]. Do not include any explanation.'
+    )
+    raw = generate_content(client, prompt)
+    raw = re.sub(r"^```(?:json)?\s*\n?", "", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"\n?```\s*$", "", raw)
+    try:
+        selected = json.loads(raw)
+        if isinstance(selected, list):
+            valid = [c for c in selected if c in columns]
+            if valid:
+                return valid[:max_cols]
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return columns[:max_cols]
