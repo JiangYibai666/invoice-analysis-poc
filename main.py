@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import os
 import socket
 import time
+import webbrowser
 
 import uvicorn
 from dotenv import load_dotenv
@@ -36,16 +38,16 @@ def main() -> None:
     init_db()
 
     configs = [
-        ("agents.host_agent.server:app", 10000),
-        ("agents.invoice_agent.server:app", 10001),
-        ("agents.purchase_order_agent.server:app", 10002),
-        ("agents.delivery_order_agent.server:app", 10003),
+        ("HostAgent", "agents.host_agent.server:app", 10000),
+        ("InvoiceAgent", "agents.invoice_agent.server:app", 10001),
+        ("PurchaseOrderAgent", "agents.purchase_order_agent.server:app", 10002),
+        ("DeliveryOrderAgent", "agents.delivery_order_agent.server:app", 10003),
+        ("Frontend", "frontend_app:app", 8080),
     ]
-    labels = ["HostAgent", "InvoiceAgent", "PurchaseOrderAgent", "DeliveryOrderAgent"]
 
     blocked = [
         (label, port)
-        for (_, port), label in zip(configs, labels)
+        for label, _, port in configs
         if not _is_port_free(port)
     ]
     if blocked:
@@ -55,23 +57,31 @@ def main() -> None:
 
     processes = [
         mp.Process(target=_serve, args=(app_str, port), daemon=True)
-        for app_str, port in configs
+        for _, app_str, port in configs
     ]
 
     for proc in processes:
         proc.start()
 
-    for proc, (_, port), label in zip(processes, configs, labels):
+    frontend_ready = False
+    for proc, (label, _, port) in zip(processes, configs):
         ok = _wait_for_port(port)
         alive = proc.is_alive()
         if ok and alive:
             print(f"✓ {label} listening on http://localhost:{port}")
+            if label == "Frontend":
+                frontend_ready = True
         elif ok and not alive:
             print(f"✗ {label}: process exited unexpectedly")
         else:
             print(f"⚠  {label}: did not respond on port {port}")
 
     print("✓ PostgreSQL task store initialised")
+    if frontend_ready:
+        frontend_url = "http://127.0.0.1:8080/"
+        print(f"✓ Frontend available at {frontend_url}")
+        if os.getenv("DOXA_OPEN_FRONTEND", "1").lower() not in {"0", "false", "no"}:
+            webbrowser.open(frontend_url)
 
     from cli.chat import run_cli
     try:

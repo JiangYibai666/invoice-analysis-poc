@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Spectral:wght@400;500;600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  @keyframes doxablink { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: rgba(0,0,0,.14); border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  textarea::placeholder { color: var(--faint); }
+</style>
+</helmet>
+<div style="{{ rootStyle }}">
+  <aside style="width:248px;flex:0 0 auto;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:16px 14px;">
+    <div style="display:flex;align-items:center;gap:9px;padding:4px 6px 18px;">
+      <div style="width:28px;height:28px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:16px;flex:0 0 auto;">D</div>
+      <div>
+        <div style="font-family:var(--display);font-size:17px;color:var(--text);line-height:1;">Doxa</div>
+        <div style="font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin-top:4px;">Invoice Agent</div>
+      </div>
+    </div>
+    <button onClick="{{ newChat }}" style="display:flex;align-items:center;gap:8px;width:100%;background:var(--surface);border:1px solid var(--border-strong);border-radius:calc(var(--radius) - 4px);padding:9px 12px;cursor:pointer;font-family:var(--body);font-size:14px;color:var(--text);margin-bottom:22px;" style-hover="border-color:var(--accent);">
+      <span style="color:var(--accent);font-size:16px;line-height:1;">+</span> New chat
+    </button>
+    <div style="font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--faint);padding:0 6px 9px;">Examples</div>
+    <div style="display:flex;flex-direction:column;gap:1px;overflow:auto;flex:1;">
+      <sc-for list="{{ examples }}" as="ex" hint-placeholder-count="5">
+        <button onClick="{{ ex.run }}" style="text-align:left;background:transparent;border:none;border-radius:8px;padding:9px 8px;cursor:pointer;font-family:var(--body);font-size:13px;color:var(--muted);line-height:1.45;" style-hover="background:var(--surface);color:var(--text);">{{ ex.q }}</button>
+      </sc-for>
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:13px;margin-top:8px;display:flex;align-items:center;gap:9px;">
+      <div style="width:26px;height:26px;border-radius:50%;background:var(--border-strong);flex:0 0 auto;"></div>
+      <div style="font-size:13px;color:var(--text);">Finance Ops</div>
+      <div style="margin-left:auto;font-family:var(--mono);font-size:9px;letter-spacing:.05em;color:var(--faint);border:1px solid var(--border);border-radius:5px;padding:2px 6px;">{{ variantName }}</div>
+    </div>
+  </aside>
+
+  <main style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg);">
+    <header style="height:53px;flex:0 0 auto;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 26px;gap:12px;">
+      <div style="font-family:var(--display);font-size:16px;color:var(--text);">Doxa Invoice Agent</div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:8px;position:relative;">
+        <span style="font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:3px 8px;">INVOICE_DB · read-only</span>
+        <span style="font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:3px 8px;">Gemini</span>
+        <button onClick="{{ toggleSettings }}" style="display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;color:var(--text);background:var(--surface);border:1px solid var(--border-strong);border-radius:6px;padding:3px 9px;cursor:pointer;" style-hover="border-color:var(--accent);">
+          <span style="width:7px;height:7px;border-radius:50%;background:{{ statusDot }};"></span>{{ statusLabel }}
+        </button>
+        <sc-if value="{{ settingsOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute;top:40px;right:0;width:320px;background:var(--surface);border:1px solid var(--border-strong);border-radius:calc(var(--radius) - 2px);box-shadow:0 10px 30px rgba(0,0,0,0.13);padding:16px;z-index:50;">
+            <div style="font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--faint);margin-bottom:10px;">Backend connection</div>
+            <div style="display:flex;gap:6px;margin-bottom:13px;">
+              <button onClick="{{ setLive }}" style="flex:1;padding:7px 0;border-radius:8px;cursor:pointer;font-family:var(--body);font-size:12.5px;border:1px solid {{ liveBorder }};background:{{ liveBg }};color:{{ liveColor }};">Live backend</button>
+              <button onClick="{{ setDemo }}" style="flex:1;padding:7px 0;border-radius:8px;cursor:pointer;font-family:var(--body);font-size:12.5px;border:1px solid {{ demoBorder }};background:{{ demoBg }};color:{{ demoColor }};">Demo data</button>
+            </div>
+            <label style="display:block;font-size:11.5px;color:var(--muted);margin-bottom:5px;">HostAgent URL</label>
+            <input value="{{ urlDraft }}" onInput="{{ onUrlInput }}" placeholder="http://127.0.0.1:10000" style="width:100%;border:1px solid var(--border-strong);border-radius:8px;padding:8px 10px;font-family:var(--mono);font-size:12px;color:var(--text);background:var(--bg);outline:none;margin-bottom:13px;" />
+            <button onClick="{{ saveSettings }}" style="width:100%;padding:8px 0;border:none;border-radius:8px;background:var(--accent);color:#fff;font-family:var(--body);font-size:13px;cursor:pointer;">Save</button>
+            <div style="font-size:11px;color:var(--faint);line-height:1.5;margin-top:11px;">Live mode streams from <span style="font-family:var(--mono);">POST /tasks/sendSubscribe</span>. The server must allow this origin via CORS.</div>
+          </div>
+        </sc-if>
+      </div>
+    </header>
+
+    <sc-if value="{{ isWelcome }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:1;overflow:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 28px;">
+        <div style="width:100%;max-width:680px;">
+          <div style="font-family:var(--display);font-size:35px;line-height:1.12;color:var(--text);margin-bottom:11px;letter-spacing:-0.01em;">Ask anything about your invoices.</div>
+          <div style="font-size:15px;color:var(--muted);margin-bottom:26px;line-height:1.55;max-width:560px;">Doxa routes your question to the right specialist agent and answers from live invoice, purchase order, and delivery order data.</div>
+          <div style="border:1px solid var(--border-strong);background:var(--surface);border-radius:var(--radius);padding:11px 13px;display:flex;align-items:flex-end;gap:10px;box-shadow:0 1px 2px rgba(0,0,0,0.03);">
+            <textarea value="{{ input }}" onInput="{{ onInput }}" onKeyDown="{{ onKey }}" rows="1" placeholder="Ask about invoices, suppliers, POs, three-way matching…" style="flex:1;border:none;outline:none;resize:none;background:transparent;font-family:var(--body);font-size:15px;line-height:1.5;color:var(--text);max-height:140px;padding:4px 2px;"></textarea>
+            <button onClick="{{ submit }}" style="flex:0 0 auto;width:36px;height:36px;border-radius:calc(var(--radius) - 4px);border:none;background:var(--accent);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:17px;">↑</button>
+          </div>
+          <div style="margin-top:28px;">
+            <div style="font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--faint);margin-bottom:13px;">Try an example</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <sc-for list="{{ examples }}" as="ex" hint-placeholder-count="4">
+                <button onClick="{{ ex.run }}" style="text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:15px 16px;cursor:pointer;" style-hover="border-color:var(--accent);">
+                  <div style="font-family:var(--body);font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px;">{{ ex.label }}</div>
+                  <div style="font-size:12.5px;color:var(--muted);line-height:1.45;">{{ ex.q }}</div>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isConversation }}" hint-placeholder-val="{{ false }}">
+      <div ref="{{ transcriptRef }}" style="flex:1;overflow:auto;padding:30px 28px;">
+        <div style="max-width:720px;margin:0 auto;">
+          <sc-for list="{{ messages }}" as="msg" hint-placeholder-count="2">
+            <div style="margin-bottom:28px;">
+              <sc-if value="{{ msg.isUser }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;justify-content:flex-end;">
+                  <div style="max-width:78%;background:var(--user-bubble);color:var(--text);padding:11px 16px;border-radius:var(--radius);font-size:15px;line-height:1.55;">{{ msg.text }}</div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ msg.isAssistant }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex;gap:14px;align-items:flex-start;">
+                  <div style="width:27px;height:27px;border-radius:7px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:14px;flex:0 0 auto;margin-top:2px;">D</div>
+                  <div style="flex:1;min-width:0;">
+                    <sc-if value="{{ msg.hasRouting }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-bottom:14px;">
+                        <span style="display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:4px 9px;">{{ msg.host }}</span>
+                        <sc-for list="{{ msg.routed }}" as="r" hint-placeholder-count="1">
+                          <span style="color:var(--faint);font-size:13px;">→</span>
+                          <span style="display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent-border);border-radius:7px;padding:4px 9px;">{{ r.name }}<span style="color:var(--muted);opacity:.8;border-left:1px solid var(--accent-border);padding-left:7px;">{{ r.task }}</span></span>
+                        </sc-for>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ msg.isWorking }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:14px;padding:2px 0 4px;">
+                        <span style="display:inline-flex;gap:4px;">
+                          <span style="width:6px;height:6px;border-radius:50%;background:var(--accent);animation:doxablink 1s infinite;"></span>
+                          <span style="width:6px;height:6px;border-radius:50%;background:var(--accent);animation:doxablink 1s infinite .18s;"></span>
+                          <span style="width:6px;height:6px;border-radius:50%;background:var(--accent);animation:doxablink 1s infinite .36s;"></span>
+                        </span>
+                        {{ msg.workLabel }}
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ msg.hasError }}" hint-placeholder-val="{{ false }}">
+                      <div style="padding:12px 15px;background:oklch(0.96 0.028 32);border:1px solid oklch(0.86 0.06 32);border-radius:calc(var(--radius) - 4px);font-size:13.5px;line-height:1.55;color:oklch(0.45 0.11 32);">{{ msg.error }}</div>
+                    </sc-if>
+                    <sc-if value="{{ msg.hasText }}" hint-placeholder-val="{{ false }}">
+                      <p style="font-size:15px;line-height:1.65;color:var(--text);margin:0 0 15px;white-space:pre-wrap;">{{ msg.text }}</p>
+                    </sc-if>
+                    <sc-if value="{{ msg.hasSqls }}" hint-placeholder-val="{{ false }}">
+                      <sc-for list="{{ msg.sqls }}" as="sq" hint-placeholder-count="1">
+                        <div style="margin-bottom:11px;border:1px solid var(--border);border-radius:calc(var(--radius) - 4px);overflow:hidden;">
+                          <button onClick="{{ sq.toggle }}" style="width:100%;display:flex;align-items:center;gap:9px;background:var(--surface);border:none;padding:10px 13px;cursor:pointer;font-family:var(--mono);font-size:12px;color:var(--muted);text-align:left;">
+                            <span style="color:var(--accent);font-size:10px;width:10px;">{{ sq.caret }}</span> {{ sq.label }}
+                            <span style="margin-left:auto;text-transform:uppercase;letter-spacing:.08em;font-size:9.5px;color:var(--faint);">read-only · validated</span>
+                          </button>
+                          <sc-if value="{{ sq.open }}" hint-placeholder-val="{{ false }}">
+                            <pre style="margin:0;padding:14px 16px;background:#2b2a26;color:#e9e6db;font-family:var(--mono);font-size:12px;line-height:1.65;overflow:auto;white-space:pre;border-top:1px solid var(--border);">{{ sq.sql }}</pre>
+                          </sc-if>
+                        </div>
+                      </sc-for>
+                    </sc-if>
+                    <sc-if value="{{ msg.hasTables }}" hint-placeholder-val="{{ false }}">
+                      <sc-for list="{{ msg.tables }}" as="tb" hint-placeholder-count="1">
+                        <div style="margin-bottom:15px;">
+                          <sc-if value="{{ tb.title }}" hint-placeholder-val="{{ false }}">
+                            <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:6px;">{{ tb.title }}</div>
+                          </sc-if>
+                          <div style="border:1px solid var(--border);border-radius:calc(var(--radius) - 4px);overflow:auto;">
+                            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                              <thead>
+                                <tr>
+                                  <sc-for list="{{ tb.cols }}" as="col" hint-placeholder-count="5">
+                                    <th style="text-align:left;padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border-strong);font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);white-space:nowrap;">{{ col }}</th>
+                                  </sc-for>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <sc-for list="{{ tb.rows }}" as="row" hint-placeholder-count="4">
+                                  <tr>
+                                    <sc-for list="{{ row.cells }}" as="cell" hint-placeholder-count="5">
+                                      <td style="padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text);white-space:nowrap;">{{ cell }}</td>
+                                    </sc-for>
+                                  </tr>
+                                </sc-for>
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </sc-for>
+                    </sc-if>
+                    <sc-if value="{{ msg.hasSummary }}" hint-placeholder-val="{{ false }}">
+                      <div style="padding:12px 15px;background:var(--accent-soft);border:1px solid var(--accent-border);border-radius:calc(var(--radius) - 4px);font-size:14px;line-height:1.6;color:var(--text);">
+                        <span style="color:var(--accent);font-weight:600;">In summary:</span> {{ msg.summary }}
+                      </div>
+                    </sc-if>
+                  </div>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <div style="padding:14px 28px 18px;border-top:1px solid var(--border);background:var(--bg);flex:0 0 auto;">
+        <div style="max-width:720px;margin:0 auto;">
+          <div style="border:1px solid var(--border-strong);background:var(--surface);border-radius:var(--radius);padding:11px 13px;display:flex;align-items:flex-end;gap:10px;box-shadow:0 1px 2px rgba(0,0,0,0.03);">
+            <textarea value="{{ input }}" onInput="{{ onInput }}" onKeyDown="{{ onKey }}" rows="1" placeholder="Reply to Doxa…" style="flex:1;border:none;outline:none;resize:none;background:transparent;font-family:var(--body);font-size:15px;line-height:1.5;color:var(--text);max-height:140px;padding:4px 2px;"></textarea>
+            <button onClick="{{ submit }}" style="flex:0 0 auto;width:36px;height:36px;border-radius:calc(var(--radius) - 4px);border:none;background:var(--accent);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:17px;">↑</button>
+          </div>
+          <div style="text-align:center;font-size:11px;color:var(--faint);margin-top:9px;">{{ footerNote }}</div>
+        </div>
+      </div>
+    </sc-if>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1180, &quot;height&quot;: 760}, &quot;variant&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;paper&quot;, &quot;soft&quot;, &quot;editorial&quot;], &quot;default&quot;: &quot;editorial&quot;, &quot;tsType&quot;: &quot;'paper' | 'soft' | 'editorial'&quot;}}">
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.transcriptRef = React.createRef();
+    let mode = 'demo';
+    let backendUrl = 'http://127.0.0.1:10000';
+    try {
+      const m = localStorage.getItem('doxa.mode'); if (m) mode = m;
+      const u = localStorage.getItem('doxa.backendUrl'); if (u) backendUrl = u;
+    } catch (e) {}
+    this.state = { view: 'welcome', input: '', messages: [], seq: 1, mode, backendUrl, urlDraft: backendUrl, settingsOpen: false };
+  }
+
+  themes() {
+    return {
+      paper: {
+        bg: '#f1efe7', sidebar: '#ece9df', surface: '#fbfaf5',
+        text: '#33312b', muted: '#76726a', faint: '#a39e93',
+        border: '#e2dfd4', borderStrong: '#d4d0c2',
+        accent: 'oklch(0.56 0.055 152)', accentSoft: 'oklch(0.955 0.018 152)', accentBorder: 'oklch(0.88 0.03 152)',
+        userBubble: '#e6ebe0',
+        display: "'Newsreader', Georgia, serif", body: "'Public Sans', system-ui, sans-serif", mono: "'IBM Plex Mono', monospace",
+        radius: '14px'
+      },
+      soft: {
+        bg: '#fbfbfa', sidebar: '#f3f4f1', surface: '#ffffff',
+        text: '#2a2c28', muted: '#6b6f68', faint: '#a4a89f',
+        border: '#eaebe7', borderStrong: '#dcded7',
+        accent: 'oklch(0.62 0.07 158)', accentSoft: 'oklch(0.965 0.022 158)', accentBorder: 'oklch(0.89 0.035 158)',
+        userBubble: '#eef1ec',
+        display: "'Public Sans', system-ui, sans-serif", body: "'Public Sans', system-ui, sans-serif", mono: "'IBM Plex Mono', monospace",
+        radius: '17px'
+      },
+      editorial: {
+        bg: '#f5f3ee', sidebar: '#efece4', surface: '#fcfbf7',
+        text: '#2c2a25', muted: '#75716a', faint: '#a8a397',
+        border: '#e3dfd3', borderStrong: '#cec8ba',
+        accent: 'oklch(0.5 0.07 150)', accentSoft: 'oklch(0.945 0.02 150)', accentBorder: 'oklch(0.85 0.035 150)',
+        userBubble: '#eae6db',
+        display: "'Spectral', Georgia, serif", body: "'Public Sans', system-ui, sans-serif", mono: "'IBM Plex Mono', monospace",
+        radius: '5px'
+      }
+    };
+  }
+
+  theme() { const t = this.themes(); return t[this.props.variant] || t.paper; }
+
+  rootStyle() {
+    const t = this.theme();
+    return {
+      '--bg': t.bg, '--sidebar': t.sidebar, '--surface': t.surface,
+      '--text': t.text, '--muted': t.muted, '--faint': t.faint,
+      '--border': t.border, '--border-strong': t.borderStrong,
+      '--accent': t.accent, '--accent-soft': t.accentSoft, '--accent-border': t.accentBorder,
+      '--user-bubble': t.userBubble,
+      '--display': t.display, '--body': t.body, '--mono': t.mono, '--radius': t.radius,
+      fontFamily: 'var(--body)', color: 'var(--text)', background: 'var(--bg)',
+      height: '100%', width: '100%', display: 'flex', overflow: 'hidden'
+    };
+  }
+
+  componentDidUpdate() { const el = this.transcriptRef.current; if (el) el.scrollTop = el.scrollHeight; }
+
+  newChat() { this.setState({ view: 'welcome', messages: [], input: '' }); }
+  onInput(e) { this.setState({ input: e.target.value }); }
+  onKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.submit(); } }
+  submit() { const q = (this.state.input || '').trim(); if (q) this.ask(q); }
+
+  toggleSettings() { this.setState(s => ({ settingsOpen: !s.settingsOpen, urlDraft: s.backendUrl })); }
+  onUrlInput(e) { this.setState({ urlDraft: e.target.value }); }
+  setLive() { this.setState({ mode: 'live' }); }
+  setDemo() { this.setState({ mode: 'demo' }); }
+  saveSettings() {
+    const url = (this.state.urlDraft || '').trim().replace(/\/+$/, '') || 'http://127.0.0.1:10000';
+    this.setState({ backendUrl: url, settingsOpen: false });
+    try { localStorage.setItem('doxa.mode', this.state.mode); localStorage.setItem('doxa.backendUrl', url); } catch (e) {}
+  }
+
+  patch(id, fields) { this.setState(s => ({ messages: s.messages.map(m => m.id === id ? { ...m, ...fields } : m) })); }
+  toggleSql(id, idx) {
+    this.setState(s => ({ messages: s.messages.map(m => {
+      if (m.id !== id) return m;
+      const open = { ...(m.sqlOpen || {}) }; open[idx] = !open[idx];
+      return { ...m, sqlOpen: open };
+    }) }));
+  }
+
+  ask(q) {
+    const userId = 'm' + this.state.seq;
+    const aId = 'm' + (this.state.seq + 1);
+    const userMsg = { id: userId, role: 'user', text: q };
+    const aMsg = { id: aId, role: 'assistant', status: 'routing', host: 'Host Agent', routed: [], dbLabel: 'INVOICE_DB', sqlOpen: {}, sqls: [], text: '', tables: [], summary: '', error: '' };
+    this.setState(s => ({ view: 'conversation', input: '', seq: s.seq + 2, messages: [...s.messages, userMsg, aMsg] }));
+    if (this.state.mode === 'live') this.askBackend(aId, q);
+    else this.askDemo(aId, q);
+  }
+
+  askDemo(aId, q) {
+    const resp = this.buildResponse(q);
+    setTimeout(() => this.patch(aId, { status: 'querying', routed: resp.routed, dbLabel: resp.dbLabel }), 850);
+    setTimeout(() => this.patch(aId, {
+      status: 'done', text: resp.text,
+      sqls: resp.sql ? [{ sql: resp.sql, agent: '' }] : [],
+      tables: resp.table ? [{ title: '', cols: resp.table.cols, rows: resp.table.rows }] : [],
+      summary: resp.summary
+    }), 2050);
+  }
+
+  // ── Live backend (HostAgent A2A SSE) ───────────────────────────────────────
+  displayAgent(name) {
+    return ({ InvoiceAgent: 'Invoice Agent', PurchaseOrderAgent: 'PO Agent', DeliveryOrderAgent: 'DO Agent', HostAgent: 'Host Agent' })[name] || name;
+  }
+  stripTables(text) { return (text || '').replace(/\n?(?:\|[^\n]+\|\n?)+/g, '\n').trim(); }
+  parseSummary(text) {
+    const m = (text || '').match(/In summary:[^\n]*/);
+    if (m) return { body: text.slice(0, m.index).trim(), summary: m[0].replace(/^In summary:\s*/, '').trim() };
+    return { body: this.stripTables(text), summary: '' };
+  }
+  pickCols(d) {
+    const cols = d.columns || [];
+    const dc = (d.display_columns || []).filter(c => cols.includes(c));
+    return dc.length ? dc : cols;
+  }
+  toRows(d) {
+    const cols = this.pickCols(d);
+    return (d.rows || []).slice(0, 100).map(r => cols.map(c => { const v = r[c]; return v === null || v === undefined ? '' : String(v); }));
+  }
+  reportToMessage(report) {
+    const rd = report.raw_data || {};
+    const qtype = report.query_type || rd.query_type;
+    if (qtype === 'error' || (typeof qtype === 'string' && qtype.endsWith('_error'))) {
+      return { error: rd.error || report.summary || 'The agent could not answer that question.', text: '', tables: [], sqls: [], summary: '', routed: null };
+    }
+    const isMulti = qtype === 'multi_agent_analysis';
+    let body, summary;
+    if (isMulti) { body = this.stripTables(report.summary || ''); summary = ''; }
+    else { const p = this.parseSummary(report.summary || ''); body = this.stripTables(p.body); summary = p.summary; }
+    const tables = [], sqls = [];
+    if (isMulti) {
+      const ar = rd.agent_results || {};
+      Object.keys(ar).forEach(k => {
+        const d = ar[k] || {};
+        if (d.columns && d.rows && d.rows.length) tables.push({ title: this.displayAgent(k), cols: this.pickCols(d), rows: this.toRows(d) });
+        if (d.sql) sqls.push({ agent: this.displayAgent(k), sql: d.sql });
+      });
+    } else {
+      if (rd.columns && rd.rows && rd.rows.length) tables.push({ title: '', cols: this.pickCols(rd), rows: this.toRows(rd) });
+      if (rd.sql) sqls.push({ agent: '', sql: rd.sql });
+    }
+    const route = rd.route;
+    const routed = route ? (route.target_agents || []).map(a => ({ name: this.displayAgent(a), task: route.task_type || '' })) : null;
+    return { error: '', text: body, summary, tables, sqls, routed };
+  }
+
+  async askBackend(aId, q) {
+    const base = (this.state.backendUrl || '').replace(/\/+$/, '');
+    const payload = { source_agent: 'CLI', target_agent: 'HostAgent', message: { role: 'user', parts: [{ type: 'text', text: q }] } };
+    try {
+      const resp = await fetch(base + '/tasks/sendSubscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+        body: JSON.stringify(payload)
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
+      if (!resp.body) throw new Error('Streaming not supported by this browser/response.');
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+          const line = frame.split('\n').find(l => l.startsWith('data: '));
+          if (!line) continue;
+          let ev; try { ev = JSON.parse(line.slice(6)); } catch (e) { continue; }
+          this.onBackendEvent(aId, ev);
+        }
+      }
+    } catch (err) {
+      const msg = (err && err.message) || String(err);
+      this.patch(aId, { status: 'done', error: 'Could not reach the backend at ' + base + '. ' + msg + '  Check that HostAgent is running and that it allows this origin via CORS.' });
+    }
+  }
+
+  onBackendEvent(aId, ev) {
+    if (ev.state === 'working' && ev.message && ev.message.indexOf('targets=') >= 0) {
+      const m = ev.message.match(/route=(\S+)\s+targets=(.+)/);
+      let routed = [], task = '', agents = [];
+      if (m) { task = m[1]; agents = m[2].split(',').map(s => s.trim()).filter(Boolean); routed = agents.map(a => ({ name: this.displayAgent(a), task })); }
+      const cross = agents.some(a => a === 'PurchaseOrderAgent' || a === 'DeliveryOrderAgent');
+      this.patch(aId, { status: 'querying', routed, host: 'Host Agent', dbLabel: cross ? 'INVOICE_DB + PURCHASE_DB' : 'INVOICE_DB' });
+    } else if (ev.state === 'failed') {
+      this.patch(aId, { status: 'done', error: ev.message || 'HostAgent request failed.' });
+    } else if (ev.state === 'completed' && ev.artifact) {
+      let data = {};
+      const parts = (ev.artifact.parts || []);
+      for (const p of parts) { if (p && p.type === 'data') { data = p.data; break; } }
+      const parsed = this.reportToMessage(data);
+      const fields = { status: 'done', text: parsed.text, tables: parsed.tables, sqls: parsed.sqls, summary: parsed.summary, error: parsed.error, sqlOpen: {} };
+      if (parsed.routed && parsed.routed.length) fields.routed = parsed.routed;
+      this.patch(aId, fields);
+    }
+  }
+
+  buildResponse(q) {
+    const s = (q || '').toLowerCase();
+    if (/match|three|po and do|inv-/.test(s)) {
+      return {
+        routed: [
+          { name: 'Invoice Agent', task: 'invoice_lookup' },
+          { name: 'PO Agent', task: 'invoice_po_matching' },
+          { name: 'DO Agent', task: 'invoice_do_matching' }
+        ],
+        dbLabel: 'INVOICE_DB + PURCHASE_DB',
+        text: "Invoice INV-00000001 from Meridian Steel was checked against PO-2024-0188 and DO-2024-0461. The purchase order matches on quantity, unit price, and line amount across all lines. The delivery order is a partial match — line 2 was short-delivered by 40 units.",
+        sql: "SELECT ii.item_name,\n       ii.invoice_qty,\n       ii.po_qty,\n       ii.do_qty_received,\n       ii.invoice_unit_price,\n       ii.po_unit_price\nFROM public.invoice i\nJOIN public.invoice_item ii ON ii.invoice_id = i.id\nWHERE i.invoice_no = 'INV-00000001'\n   OR i.invoice_global_no = 'INV-00000001'\nORDER BY ii.id;",
+        table: {
+          cols: ['Line', 'Item', 'Inv Qty', 'PO Qty', 'DO Qty', 'Match'],
+          rows: [
+            ['1', 'Reinforced steel bar 12mm', '500', '500', '500', '✓ Full'],
+            ['2', 'Galvanised sheet 1.2mm', '300', '300', '260', '⚠ Short 40'],
+            ['3', 'Welded mesh A8', '120', '120', '120', '✓ Full']
+          ]
+        },
+        summary: "PO match passed on all 3 lines; the DO match flagged a 40-unit shortfall on line 2 — a two-of-three match."
+      };
+    }
+    if (/currency/.test(s)) {
+      return {
+        routed: [{ name: 'Invoice Agent', task: 'payment_status_analysis' }],
+        dbLabel: 'INVOICE_DB',
+        text: "Overdue invoices span four currencies. SGD dominates by count with 184 overdue invoices (7.44M overdue), while IDR carries the largest local-currency balance at 9.31B.",
+        sql: "SELECT i.currency_code,\n       COUNT(*)            AS overdue_invoices,\n       SUM(i.total_amount) AS total_overdue\nFROM public.invoice i\nWHERE i.invoice_due_date < NOW()\n  AND i.invoice_status NOT IN\n      ('PAID','COMPLETED','REJECTED','CANCELLED','VOID','FAILED')\nGROUP BY i.currency_code\nORDER BY overdue_invoices DESC;",
+        table: {
+          cols: ['Currency', 'Overdue Invoices', 'Total Overdue'],
+          rows: [
+            ['SGD', '184', '7,442,900.00'],
+            ['IDR', '96', '9,310,000,000.00'],
+            ['USD', '41', '1,288,600.00'],
+            ['MYR', '22', '612,400.00']
+          ]
+        },
+        summary: "SGD has the most overdue invoices (184); IDR holds the largest absolute balance (9.31B)."
+      };
+    }
+    if (/supplier/.test(s)) {
+      return {
+        routed: [{ name: 'Invoice Agent', task: 'supplier_analysis' }],
+        dbLabel: 'INVOICE_DB',
+        text: "Here are the 10 suppliers submitting the most invoices. Meridian Steel leads with 312 invoices worth 8.94M SGD, followed by Greenfield Logistics with 287.",
+        sql: "SELECT s.company_name AS supplier_name,\n       COUNT(*)            AS invoice_count,\n       SUM(i.total_amount) AS total_amount,\n       i.currency_code\nFROM public.invoice i\nJOIN public.supplier_information s ON s.id = i.supplier_id\nGROUP BY s.company_name, i.currency_code\nORDER BY invoice_count DESC\nLIMIT 10;",
+        table: {
+          cols: ['Supplier', 'Invoices', 'Total Amount', 'Currency'],
+          rows: [
+            ['Meridian Steel Pte Ltd', '312', '8,940,200.00', 'SGD'],
+            ['Greenfield Logistics', '287', '5,120,000,000.00', 'IDR'],
+            ['Summit Façade Systems', '241', '6,455,800.00', 'SGD'],
+            ['Pacific Cabling Co', '198', '2,331,400.00', 'SGD'],
+            ['Vertex Mechanical Works', '176', '1,902,650.00', 'USD'],
+            ['Nordic Components', '164', '3,118,900.00', 'SGD'],
+            ['Hua Sheng Trading', '152', '4,002,300.00', 'SGD'],
+            ['Apex Interiors', '139', '1,544,200.00', 'SGD']
+          ]
+        },
+        summary: "Meridian Steel is the highest-volume supplier (312 invoices, 8.94M SGD); the top 10 account for roughly 38% of all invoices."
+      };
+    }
+    if (/buyer/.test(s)) {
+      return {
+        routed: [{ name: 'Invoice Agent', task: 'buyer_analysis' }],
+        dbLabel: 'INVOICE_DB',
+        text: "Harbourfront Developments has the most unpaid invoices — 64 invoices with 2.12M SGD outstanding — ahead of Skyline Construction with 51.",
+        sql: "SELECT b.company_name AS buyer_name,\n       COUNT(*)                            AS unpaid_invoices,\n       SUM(i.total_amount - i.paid_amount) AS outstanding,\n       i.currency_code\nFROM public.invoice i\nJOIN public.buyer_information b ON b.id = i.buyer_id\nWHERE i.invoice_status NOT IN\n      ('PAID','COMPLETED','REJECTED','CANCELLED','VOID','FAILED')\nGROUP BY b.company_name, i.currency_code\nORDER BY unpaid_invoices DESC\nLIMIT 50;",
+        table: {
+          cols: ['Buyer', 'Unpaid Invoices', 'Outstanding', 'Currency'],
+          rows: [
+            ['Harbourfront Developments', '64', '2,118,400.00', 'SGD'],
+            ['Skyline Construction', '51', '1,740,900.00', 'SGD'],
+            ['Crescent Property Group', '47', '980,250.00', 'SGD'],
+            ['Eastgate Holdings', '39', '1,205,600.00', 'SGD'],
+            ['Continental Estates', '28', '612,300.00', 'USD']
+          ]
+        },
+        summary: "Harbourfront Developments carries the largest unpaid load (64 invoices, 2.12M SGD outstanding)."
+      };
+    }
+    if (/pending|overdue|60|outstanding/.test(s)) {
+      return {
+        routed: [{ name: 'Invoice Agent', task: 'payment_status_analysis' }],
+        dbLabel: 'INVOICE_DB',
+        text: "I found 27 invoices pending more than 60 days without an approval date — about 3.8M SGD in exposure, plus 1.2B IDR. The oldest, INV-G-004821 from Meridian Steel, has been waiting 142 days.",
+        sql: "SELECT i.invoice_global_no,\n       s.company_name AS supplier_name,\n       i.total_amount,\n       i.currency_code,\n       i.invoice_status,\n       EXTRACT(DAY FROM NOW() - i.invoice_submission_date)::int AS days_pending\nFROM public.invoice i\nJOIN public.supplier_information s ON s.id = i.supplier_id\nWHERE i.invoice_status NOT IN\n      ('PAID','COMPLETED','REJECTED','CANCELLED','VOID','FAILED')\n  AND i.invoice_approval_date IS NULL\n  AND i.invoice_submission_date < NOW() - INTERVAL '60 days'\nORDER BY days_pending DESC\nLIMIT 50;",
+        table: {
+          cols: ['Invoice', 'Supplier', 'Amount', 'Currency', 'Status', 'Days'],
+          rows: [
+            ['INV-G-004821', 'Meridian Steel Pte Ltd', '248,900.00', 'SGD', 'SUBMITTED', '142'],
+            ['INV-G-004775', 'Summit Façade Systems', '512,400.00', 'SGD', 'UNDER_REVIEW', '118'],
+            ['INV-G-004990', 'Pacific Cabling Co', '86,250.00', 'SGD', 'SUBMITTED', '103'],
+            ['INV-G-005102', 'Greenfield Logistics', '1,204,500,000.00', 'IDR', 'PENDING_APPROVAL', '96'],
+            ['INV-G-004688', 'Vertex Mechanical Works', '64,120.00', 'USD', 'SUBMITTED', '89'],
+            ['INV-G-005044', 'Nordic Components', '173,400.00', 'SGD', 'UNDER_REVIEW', '73']
+          ]
+        },
+        summary: "27 invoices (~3.8M SGD + 1.2B IDR) are stuck beyond 60 days; Meridian Steel and Summit Façade Systems carry the largest balances."
+      };
+    }
+    return {
+      routed: [{ name: 'Invoice Agent', task: 'invoice_analysis' }],
+      dbLabel: 'INVOICE_DB',
+      text: "Here's a snapshot from the invoice ledger for that question. Across 9,289 invoices, 6,142 are closed and 3,147 are still in an active workflow state.",
+      sql: "SELECT\n  COUNT(*) AS total_invoices,\n  COUNT(*) FILTER (WHERE invoice_status IN ('PAID','COMPLETED')) AS closed,\n  COUNT(*) FILTER (WHERE invoice_status NOT IN\n        ('PAID','COMPLETED','REJECTED','CANCELLED','VOID','FAILED')) AS active\nFROM public.invoice;",
+      table: {
+        cols: ['Metric', 'Value'],
+        rows: [
+          ['Total invoices', '9,289'],
+          ['Closed (paid / completed)', '6,142'],
+          ['Active / pending', '3,147'],
+          ['Total invoiced (SGD)', '41.2M'],
+          ['Avg. days to approval', '18.4']
+        ]
+      },
+      summary: "About 34% of invoices are still in an active state; average approval time is 18.4 days."
+    };
+  }
+
+  renderVals() {
+    const exCfg = [
+      { q: 'Which invoices have been pending for more than 60 days?', label: 'Pending invoices' },
+      { q: 'Show me the top 10 suppliers by invoice count', label: 'Top suppliers' },
+      { q: 'Does invoice INV-00000001 match its PO and DO?', label: 'Three-way match' },
+      { q: 'Which buyers have the most unpaid invoices?', label: 'Unpaid by buyer' },
+      { q: 'Show overdue invoices by currency', label: 'Overdue by currency' }
+    ];
+    const examples = exCfg.map(e => ({ ...e, run: () => this.ask(e.q) }));
+    const t = this.theme();
+    const isLive = this.state.mode === 'live';
+
+    const messages = this.state.messages.map(m => {
+      if (m.role === 'user') return { ...m, isUser: true, isAssistant: false };
+      const working = m.status !== 'done';
+      const workLabel = m.status === 'routing'
+        ? 'Analysing your question…'
+        : (m.status === 'querying' ? ('Querying ' + (m.dbLabel || 'INVOICE_DB') + '…') : '');
+      const tables = (m.tables || []).map(tb => ({ title: tb.title, cols: tb.cols, rows: (tb.rows || []).map(r => ({ cells: r })) }));
+      const sqls = (m.sqls || []).map((s, i) => ({
+        sql: s.sql,
+        label: s.agent ? ('Generated SQL · ' + s.agent) : 'Generated SQL',
+        open: !!(m.sqlOpen && m.sqlOpen[i]),
+        caret: (m.sqlOpen && m.sqlOpen[i]) ? '▼' : '▶',
+        toggle: () => this.toggleSql(m.id, i)
+      }));
+      return {
+        ...m,
+        isUser: false, isAssistant: true,
+        isWorking: working, workLabel,
+        hasRouting: !!(m.routed && m.routed.length),
+        hasText: !!m.text, hasSummary: !!m.summary, hasError: !!m.error,
+        hasSqls: sqls.length > 0, hasTables: tables.length > 0,
+        sqls, tables,
+        routed: (m.routed || []).map(r => ({ ...r }))
+      };
+    });
+
+    const names = { paper: 'Paper', soft: 'Soft Sans', editorial: 'Editorial' };
+    return {
+      rootStyle: this.rootStyle(),
+      isWelcome: this.state.view === 'welcome',
+      isConversation: this.state.view === 'conversation',
+      input: this.state.input,
+      examples, messages,
+      transcriptRef: this.transcriptRef,
+      onInput: (e) => this.onInput(e),
+      onKey: (e) => this.onKey(e),
+      submit: () => this.submit(),
+      newChat: () => this.newChat(),
+      variantName: names[this.props.variant] || 'Paper',
+      settingsOpen: this.state.settingsOpen,
+      toggleSettings: () => this.toggleSettings(),
+      onUrlInput: (e) => this.onUrlInput(e),
+      urlDraft: this.state.urlDraft,
+      setLive: () => this.setLive(),
+      setDemo: () => this.setDemo(),
+      saveSettings: () => this.saveSettings(),
+      statusLabel: isLive ? 'Live' : 'Demo',
+      statusDot: isLive ? t.accent : t.faint,
+      liveBg: isLive ? t.accentSoft : 'transparent', liveBorder: isLive ? t.accentBorder : t.borderStrong, liveColor: isLive ? t.accent : t.muted,
+      demoBg: !isLive ? t.accentSoft : 'transparent', demoBorder: !isLive ? t.accentBorder : t.borderStrong, demoColor: !isLive ? t.accent : t.muted,
+      footerNote: isLive ? ('Connected to ' + this.state.backendUrl + ' · read-only SQL') : 'Demo data · switch to Live in the top-right to query your backend'
+    };
+  }
+}
+</script>
+</body>
+</html>

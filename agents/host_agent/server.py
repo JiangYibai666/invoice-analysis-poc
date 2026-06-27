@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from a2a.server import create_a2a_router
 from a2a.types import TaskEvent, TaskRequest, TaskState
@@ -29,6 +30,12 @@ async def stream_handler(request: TaskRequest) -> AsyncIterator[TaskEvent]:
 
 def create_app() -> FastAPI:
     _app = FastAPI(title="HostAgent", version="0.1.0")
+    _app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     _app.include_router(create_a2a_router(stream_handler))
     return _app
 
