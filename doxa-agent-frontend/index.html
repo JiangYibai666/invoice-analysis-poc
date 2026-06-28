@@ -131,7 +131,7 @@
               <button id="demoButton">Demo data</button>
             </div>
             <label for="backendUrl">HostAgent URL</label>
-            <input id="backendUrl" value="http://127.0.0.1:10000">
+            <input id="backendUrl">
             <button class="save" id="saveSettings">Save</button>
             <div class="settings-note">Live mode streams from <span class="code-label">POST /tasks/sendSubscribe</span>. Start this app with <span class="code-label">python main.py</span>.</div>
           </div>
@@ -157,7 +157,15 @@
       </section>
     </main>
   </div>
+  <script src="/config.js"></script>
   <script>
+    const runtimeConfig = window.DOXA_CONFIG || {};
+    function defaultBackendUrl() {
+      if (runtimeConfig.hostAgentUrl) return runtimeConfig.hostAgentUrl;
+      const protocol = window.location.protocol || "http:";
+      const hostname = window.location.hostname || "127.0.0.1";
+      return `${protocol}//${hostname}:10000`;
+    }
     const examples = [
       { label: "Pending invoices", q: "Which invoices have been pending for more than 60 days?" },
       { label: "Top suppliers", q: "Show me the top 10 suppliers by invoice count" },
@@ -165,8 +173,8 @@
       { label: "Three-way match", q: "Check three-way matching for invoice INV-00000001" }
     ];
     const state = {
-      mode: localStorage.getItem("doxa.mode") || "live",
-      backendUrl: localStorage.getItem("doxa.backendUrl") || "http://127.0.0.1:10000",
+      mode: localStorage.getItem("doxa.mode") || runtimeConfig.defaultMode || "live",
+      backendUrl: localStorage.getItem("doxa.backendUrl") || defaultBackendUrl(),
       seq: 1
     };
     const $ = (id) => document.getElementById(id);
@@ -351,7 +359,7 @@
     $("liveButton").addEventListener("click", () => { state.mode = "live"; syncSettings(); });
     $("demoButton").addEventListener("click", () => { state.mode = "demo"; syncSettings(); });
     $("saveSettings").addEventListener("click", () => {
-      state.backendUrl = ($("backendUrl").value || "http://127.0.0.1:10000").trim().replace(/\/+$/, "");
+      state.backendUrl = ($("backendUrl").value || defaultBackendUrl()).trim().replace(/\/+$/, "");
       localStorage.setItem("doxa.mode", state.mode);
       localStorage.setItem("doxa.backendUrl", state.backendUrl);
       $("settings").classList.remove("open");

@@ -50,3 +50,49 @@ Date: 2026-06-17
 - Problem: For questions such as `Check POGLOBAL00008981 and its related invoice and DO`, PurchaseOrderAgent could describe a DO reference from `public.purchase_order.delivery_order_number`, while DeliveryOrderAgent could fail to find DO records because it was not explicitly told how to resolve a PO global number into DO-side records.
 - Change: Expanded DeliveryOrderAgent's schema context with minimal `public.purchase_order` and `public.po_item` fields, plus join patterns for resolving local/global PO identifiers through `delivery_order_item`, `po_item`, `purchase_order`, and `delivery_order.po_list`. Added SQL prompt guidance to treat `POGLOBAL...`, `PO-...`, and PO UUID values as PO identifiers when the user asks for related DOs. Updated PurchaseOrderAgent's summary guidance to label `delivery_order_number` and `do_status` from `public.purchase_order` as PO-record references/status summaries rather than independently verified DO facts.
 - Impact: Cross-domain PO questions remain LLM-generated SQL flows, but the LLM now has the schema and relationship rules needed to find related DOs from a PO global number and to avoid contradictory source wording.
+
+## Frontend hosting and runtime configuration
+
+Date: 2026-06-28
+
+### 1. Start the browser frontend from `python main.py`
+
+- Files changed:
+  - `main.py`
+  - `frontend_app.py`
+  - `README.md`
+- Problem: The frontend files existed in the project, but `python main.py` only started the agent backends and CLI. Users had to serve the frontend separately, and opening the original `.dc.html` page could produce a blank page if its external runtime dependencies were unavailable.
+- Change: Added a FastAPI frontend app and included it in the `main.py` process list. Startup now launches HostAgent, InvoiceAgent, PurchaseOrderAgent, DeliveryOrderAgent, and the browser frontend together. The frontend URL is printed and opened automatically unless `DOXA_OPEN_FRONTEND=0` is set.
+- Impact: Running `python main.py` now provides both the CLI and browser UI. The frontend is available by default at `http://127.0.0.1:8080/`.
+
+### 2. Add a self-contained browser UI entrypoint
+
+- Files changed:
+  - `doxa-agent-frontend/index.html`
+  - `frontend_app.py`
+- Problem: The original generated frontend page depended on the bundled DC runtime loading React from a CDN. When the browser could not fetch that dependency, the raw template was hidden and the user saw a blank page.
+- Change: Added `doxa-agent-frontend/index.html`, a self-contained HTML/CSS/JavaScript frontend that talks to the existing HostAgent `POST /tasks/sendSubscribe` SSE endpoint. `frontend_app.py` serves this file at `/` and keeps the original `DoxaApp.dc.html` available for compatibility.
+- Impact: The default frontend no longer depends on CDN-loaded React and avoids the blank-page failure mode while preserving the existing backend protocol.
+
+### 3. Make frontend/backend ports and origins configurable
+
+- Files changed:
+  - `main.py`
+  - `frontend_app.py`
+  - `agents/host_agent/server.py`
+  - `doxa-agent-frontend/index.html`
+  - `.env.example`
+  - `README.md`
+- Problem: The initial integration hardcoded local addresses and ports in multiple places, and HostAgent used permissive wildcard CORS. This made non-default local setups harder and left connection policy implicit.
+- Change: Added environment-driven runtime settings:
+  - `DOXA_BIND_HOST`
+  - `HOST_AGENT_PORT`
+  - `INVOICE_AGENT_PORT`
+  - `PURCHASE_ORDER_AGENT_PORT`
+  - `DELIVERY_ORDER_AGENT_PORT`
+  - `DOXA_FRONTEND_PORT`
+  - `DOXA_OPEN_FRONTEND`
+  - `DOXA_FRONTEND_MODE`
+  - `DOXA_CORS_ORIGINS`
+  The frontend now loads `/config.js` to discover the HostAgent URL instead of hardcoding it in the page. HostAgent CORS now defaults to the local frontend origins and can be widened explicitly through `DOXA_CORS_ORIGINS`.
+- Impact: Defaults still support the existing one-command local POC, but ports, bind host, frontend mode, automatic browser opening, and CORS policy can now be changed without code edits.

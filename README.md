@@ -93,6 +93,17 @@ HOST_AGENT_URL=http://127.0.0.1:10000
 INVOICE_AGENT_URL=http://127.0.0.1:10001
 PURCHASE_ORDER_AGENT_URL=http://127.0.0.1:10002
 DELIVERY_ORDER_AGENT_URL=http://127.0.0.1:10003
+
+# Local server settings used by python main.py
+DOXA_BIND_HOST=127.0.0.1
+HOST_AGENT_PORT=10000
+INVOICE_AGENT_PORT=10001
+PURCHASE_ORDER_AGENT_PORT=10002
+DELIVERY_ORDER_AGENT_PORT=10003
+DOXA_FRONTEND_PORT=8080
+DOXA_OPEN_FRONTEND=1
+DOXA_FRONTEND_MODE=live
+DOXA_CORS_ORIGINS=http://127.0.0.1:8080,http://localhost:8080
 ```
 
 ### 4. Run
@@ -109,7 +120,8 @@ On startup the application will:
 4. Start **InvoiceAgent** on `http://127.0.0.1:10001`.
 5. Start **PurchaseOrderAgent** on `http://127.0.0.1:10002`.
 6. Start **DeliveryOrderAgent** on `http://127.0.0.1:10003`.
-7. Open the interactive CLI.
+7. Start the browser frontend on `http://127.0.0.1:8080`.
+8. Open the interactive CLI.
 
 ## Using the CLI
 
