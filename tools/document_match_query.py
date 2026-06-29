@@ -74,6 +74,59 @@ def extract_invoice_no(text: str) -> str | None:
     return None
 
 
+_PO_NO_PATTERNS = (
+    # GLOBAL-prefixed unique id: POGLOBAL00010640
+    re.compile(r"\b(POGLOBAL[0-9]+)\b", re.IGNORECASE),
+    # Local PO no with optional separator: PO-000000158, PO_12345, PO 158
+    re.compile(r"\b(PO[-_]?[0-9]{3,})\b", re.IGNORECASE),
+    # Keyword form: "purchase order 158", "po number: 158"
+    re.compile(
+        r"(?:\bpurchase\s+order\b|\bpo\b)\s*(?:global)?\s*(?:number|no\.?)?\s*[:=#-]?\s*"
+        r"([A-Za-z0-9][A-Za-z0-9._/\-]{2,})",
+        re.IGNORECASE,
+    ),
+)
+
+_DO_NO_PATTERNS = (
+    # GLOBAL-prefixed unique id: DOGLOBAL00009444
+    re.compile(r"\b(DOGLOBAL[0-9]+)\b", re.IGNORECASE),
+    # Local DO no with optional separator: DO-00045, DO_12345, DO 45
+    re.compile(r"\b(DO[-_]?[0-9]{3,})\b", re.IGNORECASE),
+    # Keyword form: "delivery order 45", "do number: 45"
+    re.compile(
+        r"(?:\bdelivery\s+order\b|\bdo\b)\s*(?:global)?\s*(?:number|no\.?)?\s*[:=#-]?\s*"
+        r"([A-Za-z0-9][A-Za-z0-9._/\-]{2,})",
+        re.IGNORECASE,
+    ),
+)
+
+
+def extract_po_no(text: str) -> str | None:
+    """Extract a PO identifier (number/global number/uuid) token from a question."""
+    for pattern in _PO_NO_PATTERNS:
+        for match in pattern.finditer(text):
+            candidate = match.group(1).strip(".,;:()[]{}\"'")
+            if len(candidate) < 5 or not re.search(r"\d", candidate):
+                continue
+            if candidate.lower() in _BAD_INVOICE_TOKENS:
+                continue
+            return candidate
+    return None
+
+
+def extract_do_no(text: str) -> str | None:
+    """Extract a DO identifier (number/global number/uuid) token from a question."""
+    for pattern in _DO_NO_PATTERNS:
+        for match in pattern.finditer(text):
+            candidate = match.group(1).strip(".,;:()[]{}\"'")
+            if len(candidate) < 5 or not re.search(r"\d", candidate):
+                continue
+            if candidate.lower() in _BAD_INVOICE_TOKENS:
+                continue
+            return candidate
+    return None
+
+
 def extract_requested_limit(
     text: str,
     default: int = DEFAULT_BATCH_MATCH_LIMIT,
@@ -210,60 +263,61 @@ def _fetch_invoice_lines(invoice_no: str, limit: int) -> list[dict[str, Any]]:
         conn.close()
 
 
-def _fetch_po_refs(lines: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
-    po_item_ids = sorted({int(line["po_item_id"]) for line in lines if line.get("po_item_id") is not None})
-    if not po_item_ids:
+def _fetch_po_refs(lines: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Fetch PO header info keyed by po_uuid, using invoice_item.po_uuid → purchase_order.uuid."""
+    po_uuids = sorted({
+        str(line["invoice_item_po_uuid"])
+        for line in lines
+        if line.get("invoice_item_po_uuid")
+    })
+    if not po_uuids:
         return {}
 
     sql = """
         SELECT
-            poi.id AS po_item_id,
-            poi.quantity AS po_quantity,
-            poi.item_unit_price AS po_unit_price,
-            poi.net_price AS po_net_price,
+            po.uuid AS po_uuid,
             po.po_number,
             po.po_global_number,
             po.status AS po_status,
             po.currency_code AS po_currency_code,
             po.total_amount AS po_total_amount
-        FROM public.po_item poi
-        LEFT JOIN public.purchase_order po ON po.id = poi.po_id
-        WHERE poi.id = ANY(%s)
+        FROM public.purchase_order po
+        WHERE po.uuid = ANY(%s)
     """
     conn = _connect(_PURCHASE_DB_PARAMS)
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, (po_item_ids,))
-            return {int(row["po_item_id"]): _row_to_dict(row) for row in cur.fetchall()}
+            cur.execute(sql, (po_uuids,))
+            return {str(row["po_uuid"]): _row_to_dict(row) for row in cur.fetchall()}
     finally:
         conn.close()
 
 
-def _fetch_do_refs(lines: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
-    do_item_ids = sorted({int(line["do_item_id"]) for line in lines if line.get("do_item_id") is not None})
-    if not do_item_ids:
+def _fetch_do_refs(lines: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Fetch DO header info keyed by do_uuid, using invoice_item.do_uuid → delivery_order.uuid."""
+    do_uuids = sorted({
+        str(line["invoice_item_do_uuid"])
+        for line in lines
+        if line.get("invoice_item_do_uuid")
+    })
+    if not do_uuids:
         return {}
 
     sql = """
         SELECT
-            doi.id AS do_item_id,
-            doi.qty_converted AS do_qty_converted,
-            doi.qty_received AS do_qty_received,
-            doi.qty_rejected AS do_qty_rejected,
-            doi.purchase_order_number AS do_purchase_order_number,
-            d.delivery_order_number,
-            d.global_do_number,
-            d.status AS do_status,
-            d.delivery_date
-        FROM public.delivery_order_item doi
-        LEFT JOIN public.delivery_order d ON d.id = doi.delivery_order_id
-        WHERE doi.id = ANY(%s)
+            doo.uuid AS do_uuid,
+            doo.delivery_order_number,
+            doo.global_do_number,
+            doo.status AS do_status,
+            doo.delivery_date
+        FROM public.delivery_order doo
+        WHERE doo.uuid = ANY(%s)
     """
     conn = _connect(_PURCHASE_DB_PARAMS)
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, (do_item_ids,))
-            return {int(row["do_item_id"]): _row_to_dict(row) for row in cur.fetchall()}
+            cur.execute(sql, (do_uuids,))
+            return {str(row["do_uuid"]): _row_to_dict(row) for row in cur.fetchall()}
     finally:
         conn.close()
 
@@ -286,20 +340,15 @@ def query_invoice_po_match(invoice_no: str, limit: int = 100) -> dict[str, Any]:
     lines = [row for row in rows if row.get("invoice_item_id") is not None]
     po_refs = _fetch_po_refs(lines)
     for line in lines:
-        po_ref = po_refs.get(int(line["po_item_id"])) if line.get("po_item_id") is not None else None
+        # UUID-based lookup: invoice_item.po_uuid → purchase_order.uuid
+        po_ref = po_refs.get(str(line["invoice_item_po_uuid"])) if line.get("invoice_item_po_uuid") else None
         if po_ref:
             line.update(po_ref)
-        po_qty = line.get("po_quantity") if line.get("po_quantity") is not None else line.get("invoice_item_po_qty")
-        po_unit_price = (
-            line.get("po_unit_price")
-            if line.get("po_unit_price") is not None
-            else line.get("invoice_item_po_unit_price")
-        )
-        po_net_price = (
-            line.get("po_net_price")
-            if line.get("po_net_price") is not None
-            else line.get("invoice_item_po_net_price")
-        )
+        # Use snapshot values from invoice_item (po_qty / po_unit_price / po_net_price)
+        # as the authoritative PO line data for comparison
+        po_qty = line.get("invoice_item_po_qty")
+        po_unit_price = line.get("invoice_item_po_unit_price")
+        po_net_price = line.get("invoice_item_po_net_price")
         qty_variance = _variance(line.get("invoice_qty"), po_qty)
         unit_price_variance = _variance(line.get("invoice_unit_price"), po_unit_price)
         net_amount_variance = _variance(line.get("invoice_net_price"), po_net_price)
@@ -313,9 +362,9 @@ def query_invoice_po_match(invoice_no: str, limit: int = 100) -> dict[str, Any]:
         line["unit_price_match"] = _abs_lte(unit_price_variance)
         line["net_amount_match"] = _abs_lte(net_amount_variance)
         line["has_po_reference"] = bool(
-            line.get("po_number")
+            line.get("invoice_item_po_uuid")
             or line.get("invoice_item_po_number")
-            or line.get("invoice_item_po_uuid")
+            or line.get("po_number")
             or line.get("po_item_id")
         )
 
@@ -382,20 +431,14 @@ def query_invoice_do_match(invoice_no: str, limit: int = 100) -> dict[str, Any]:
     lines = [row for row in rows if row.get("invoice_item_id") is not None]
     do_refs = _fetch_do_refs(lines)
     for line in lines:
-        do_ref = do_refs.get(int(line["do_item_id"])) if line.get("do_item_id") is not None else None
+        # UUID-based lookup: invoice_item.do_uuid → delivery_order.uuid
+        do_ref = do_refs.get(str(line["invoice_item_do_uuid"])) if line.get("invoice_item_do_uuid") else None
         if do_ref:
             line.update(do_ref)
-        received_qty = (
-            line.get("do_qty_received")
-            if line.get("do_qty_received") is not None
-            else line.get("invoice_item_do_qty_received")
-        )
+        # Use snapshot qty values from invoice_item as the authoritative received quantity
+        received_qty = line.get("invoice_item_do_qty_received")
         if received_qty is None:
-            received_qty = (
-                line.get("do_qty_converted")
-                if line.get("do_qty_converted") is not None
-                else line.get("invoice_item_do_qty_converted")
-            )
+            received_qty = line.get("invoice_item_do_qty_converted")
         qty_variance = _variance(line.get("invoice_qty"), received_qty)
         line["matched_do_quantity"] = _serialize(received_qty)
         line["quantity_variance"] = _format_money(qty_variance)
@@ -405,9 +448,9 @@ def query_invoice_do_match(invoice_no: str, limit: int = 100) -> dict[str, Any]:
             else qty_variance <= Decimal("0.000001")
         )
         line["has_do_reference"] = bool(
-            line.get("delivery_order_number")
+            line.get("invoice_item_do_uuid")
+            or line.get("delivery_order_number")
             or line.get("invoice_item_do_number")
-            or line.get("invoice_item_do_uuid")
             or line.get("do_item_id")
         )
 
@@ -445,7 +488,11 @@ def _without_lines(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_invoice_linked_refs(invoice_no: str) -> dict[str, list[str]]:
-    """Return the PO and DO numbers linked to an invoice via invoice_item fields.
+    """Return the PO and DO identifiers linked to an invoice via invoice_item fields.
+
+    Returns both UUID and number references. UUIDs (from invoice_item.po_uuid /
+    invoice_item.do_uuid) are the authoritative match keys; numbers are included
+    as human-readable fallbacks.
 
     Used by HostAgent to enrich cross-domain queries so that PO/DO agents can
     generate accurate SQL even though they have no access to the invoice database.
@@ -453,7 +500,7 @@ def get_invoice_linked_refs(invoice_no: str) -> dict[str, list[str]]:
     try:
         lines = _fetch_invoice_lines(invoice_no, 100)
     except Exception:  # noqa: BLE001
-        return {"po_numbers": [], "do_numbers": []}
+        return {"po_numbers": [], "do_numbers": [], "po_uuids": [], "do_uuids": []}
     po_numbers = sorted({
         str(l["invoice_item_po_number"])
         for l in lines
@@ -464,7 +511,162 @@ def get_invoice_linked_refs(invoice_no: str) -> dict[str, list[str]]:
         for l in lines
         if l.get("invoice_item_do_number")
     })
-    return {"po_numbers": po_numbers, "do_numbers": do_numbers}
+    po_uuids = sorted({
+        str(l["invoice_item_po_uuid"])
+        for l in lines
+        if l.get("invoice_item_po_uuid")
+    })
+    do_uuids = sorted({
+        str(l["invoice_item_do_uuid"])
+        for l in lines
+        if l.get("invoice_item_do_uuid")
+    })
+    return {"po_numbers": po_numbers, "do_numbers": do_numbers, "po_uuids": po_uuids, "do_uuids": do_uuids}
+
+
+def _resolve_po_uuid(po_identifier: str) -> str | None:
+    """Resolve any PO identifier (uuid, po_number, or po_global_number) to its uuid.
+
+    Numbers/global numbers are used ONLY to resolve the uuid; once the uuid is known,
+    all cross-entity matching is done through invoice_item.po_uuid.
+    """
+    sql = """
+        SELECT uuid
+        FROM public.purchase_order
+        WHERE uuid = %s OR po_number = %s OR po_global_number = %s
+        LIMIT 1
+    """
+    conn = _connect(_PURCHASE_DB_PARAMS)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, (po_identifier, po_identifier, po_identifier))
+            row = cur.fetchone()
+            return str(row["uuid"]) if row and row.get("uuid") else None
+    finally:
+        conn.close()
+
+
+def _resolve_do_uuid(do_identifier: str) -> str | None:
+    """Resolve any DO identifier (uuid, delivery_order_number, or global_do_number) to its uuid.
+
+    Numbers/global numbers are used ONLY to resolve the uuid; once the uuid is known,
+    all cross-entity matching is done through invoice_item.do_uuid.
+    """
+    sql = """
+        SELECT uuid
+        FROM public.delivery_order
+        WHERE uuid = %s OR delivery_order_number = %s OR global_do_number = %s
+        LIMIT 1
+    """
+    conn = _connect(_PURCHASE_DB_PARAMS)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, (do_identifier, do_identifier, do_identifier))
+            row = cur.fetchone()
+            return str(row["uuid"]) if row and row.get("uuid") else None
+    finally:
+        conn.close()
+
+
+def _fetch_invoice_items_by_uuid(column: str, uuid: str, limit: int = 200) -> list[dict[str, Any]]:
+    """Fetch invoice_item rows (with parent invoice) where po_uuid or do_uuid matches.
+
+    `column` must be either 'po_uuid' or 'do_uuid' (whitelisted to prevent injection).
+    """
+    if column not in ("po_uuid", "do_uuid"):
+        raise ValueError("column must be 'po_uuid' or 'do_uuid'")
+    sql = f"""
+        SELECT
+            i.id AS invoice_id,
+            i.uuid AS invoice_uuid,
+            i.invoice_no,
+            i.invoice_global_no,
+            ii.uuid AS invoice_item_uuid,
+            ii.po_uuid AS invoice_item_po_uuid,
+            ii.po_number AS invoice_item_po_number,
+            ii.do_uuid AS invoice_item_do_uuid,
+            ii.do_number AS invoice_item_do_number
+        FROM public.invoice_item ii
+        JOIN public.invoice i ON i.id = ii.invoice_id
+        WHERE ii.{column} = %s
+        ORDER BY ii.id
+        LIMIT %s
+    """
+    conn = _connect(_INVOICE_DB_PARAMS)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, (uuid, limit))
+            return [_row_to_dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_po_linked_refs(po_identifier: str) -> dict[str, list[str]]:
+    """Resolve a PO identifier to its uuid, then find the invoices and DOs that share
+    that uuid through invoice_item.po_uuid (the authoritative pivot).
+
+    Number/global-number values are used only to resolve the PO uuid; the actual
+    linkage between PO, invoice, and DO is established purely through invoice_item uuids.
+    """
+    empty = {"po_uuids": [], "invoice_numbers": [], "invoice_uuids": [], "invoice_ids": [], "do_uuids": [], "do_numbers": []}
+    try:
+        po_uuid = _resolve_po_uuid(po_identifier)
+        if not po_uuid:
+            return empty
+        lines = _fetch_invoice_items_by_uuid("po_uuid", po_uuid)
+    except Exception:  # noqa: BLE001
+        return empty
+    invoice_numbers = sorted({
+        str(l.get("invoice_global_no") or l.get("invoice_no"))
+        for l in lines
+        if l.get("invoice_global_no") or l.get("invoice_no")
+    })
+    invoice_uuids = sorted({str(l["invoice_uuid"]) for l in lines if l.get("invoice_uuid")})
+    invoice_ids = sorted({str(l["invoice_id"]) for l in lines if l.get("invoice_id") is not None})
+    do_uuids = sorted({str(l["invoice_item_do_uuid"]) for l in lines if l.get("invoice_item_do_uuid")})
+    do_numbers = sorted({str(l["invoice_item_do_number"]) for l in lines if l.get("invoice_item_do_number")})
+    return {
+        "po_uuids": [po_uuid],
+        "invoice_numbers": invoice_numbers,
+        "invoice_uuids": invoice_uuids,
+        "invoice_ids": invoice_ids,
+        "do_uuids": do_uuids,
+        "do_numbers": do_numbers,
+    }
+
+
+def get_do_linked_refs(do_identifier: str) -> dict[str, list[str]]:
+    """Resolve a DO identifier to its uuid, then find the invoices and POs that share
+    that uuid through invoice_item.do_uuid (the authoritative pivot).
+
+    Number/global-number values are used only to resolve the DO uuid; the actual
+    linkage between DO, invoice, and PO is established purely through invoice_item uuids.
+    """
+    empty = {"do_uuids": [], "invoice_numbers": [], "invoice_uuids": [], "invoice_ids": [], "po_uuids": [], "po_numbers": []}
+    try:
+        do_uuid = _resolve_do_uuid(do_identifier)
+        if not do_uuid:
+            return empty
+        lines = _fetch_invoice_items_by_uuid("do_uuid", do_uuid)
+    except Exception:  # noqa: BLE001
+        return empty
+    invoice_numbers = sorted({
+        str(l.get("invoice_global_no") or l.get("invoice_no"))
+        for l in lines
+        if l.get("invoice_global_no") or l.get("invoice_no")
+    })
+    invoice_uuids = sorted({str(l["invoice_uuid"]) for l in lines if l.get("invoice_uuid")})
+    invoice_ids = sorted({str(l["invoice_id"]) for l in lines if l.get("invoice_id") is not None})
+    po_uuids = sorted({str(l["invoice_item_po_uuid"]) for l in lines if l.get("invoice_item_po_uuid")})
+    po_numbers = sorted({str(l["invoice_item_po_number"]) for l in lines if l.get("invoice_item_po_number")})
+    return {
+        "do_uuids": [do_uuid],
+        "invoice_numbers": invoice_numbers,
+        "invoice_uuids": invoice_uuids,
+        "invoice_ids": invoice_ids,
+        "po_uuids": po_uuids,
+        "po_numbers": po_numbers,
+    }
 
 
 def _batch_summary(

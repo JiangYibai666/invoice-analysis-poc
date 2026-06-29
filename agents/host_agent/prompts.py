@@ -52,6 +52,16 @@ Routing rules:
     * Always include InvoiceAgent when the question is anchored on a specific
       invoice number, so that the invoice's own details are also displayed.
     * Each agent will run its own SQL query to find records linked to that invoice.
+- PO-ANCHORED LOOKUPS: If the user provides a PO number/global number and asks about
+  its related invoice and/or DO (e.g. "does PO X match its invoice and DO?"), route to
+  PurchaseOrderAgent + InvoiceAgent (+ DeliveryOrderAgent if a DO is mentioned) with
+  task_type "purchase_and_delivery_order_analysis". The linkage is resolved through
+  invoice_item UUIDs, never PO numbers.
+- DO-ANCHORED LOOKUPS: If the user provides a DO number/global number and asks about
+  its related invoice and/or PO (e.g. "does DO X match its invoice and PO?"), route to
+  DeliveryOrderAgent + InvoiceAgent (+ PurchaseOrderAgent if a PO is mentioned) with
+  task_type "purchase_and_delivery_order_analysis". The linkage is resolved through
+  invoice_item UUIDs, never DO numbers.
 - If the user asks to compare or summarize both PO and DO records (no invoice
   verification), select both PurchaseOrderAgent and DeliveryOrderAgent.
 - If the question is ambiguous, pick the single most relevant agent based on key

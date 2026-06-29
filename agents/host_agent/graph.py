@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from collections.abc import AsyncIterator
 from typing import Optional
 
@@ -11,7 +10,14 @@ from a2a.client import A2AClient
 from a2a.types import Artifact, DataPart, Message, TaskEvent, TaskRequest, TaskState, TextPart
 from agents.host_agent.router import RouteDecision, route_query
 from storage.task_store import create_session, finalize_session
-from tools.document_match_query import extract_invoice_no, get_invoice_linked_refs
+from tools.document_match_query import (
+    extract_do_no,
+    extract_invoice_no,
+    extract_po_no,
+    get_do_linked_refs,
+    get_invoice_linked_refs,
+    get_po_linked_refs,
+)
 
 
 def _extract_data(artifact: Optional[Artifact]) -> dict:
@@ -23,74 +29,170 @@ def _extract_data(artifact: Optional[Artifact]) -> dict:
     return {}
 
 
-def _split_at_summary(text: str) -> tuple[str, str]:
-    """Split an agent summary into (body, summary_sentence).
-
-    'body'  — descriptive text before 'In summary:'.
-    'summary_sentence' — the 'In summary: …' sentence (first line only).
-
-    Everything after the summary sentence (table-heading lines, markdown tables)
-    is discarded because the CLI now renders raw DB tables instead.
-    """
-    match = re.search(r"\bIn summary:[^\n]*", text)
-    if match:
-        body = text[:match.start()].strip()
-        summary_sentence = match.group(0).strip()
-        return body, summary_sentence
-    return text.strip(), ""
-
 def _build_summary(data: dict) -> str:
     """Produce a concise human-readable summary from an agent's result."""
     qtype = data.get("query_type", "unknown")
 
     if qtype == "multi_agent_analysis":
-        sections: list[str] = []
-        bullets: list[str] = []
-        for agent_name, agent_data in data.get("agent_results", {}).items():
-            raw = agent_data.get("summary", "No summary available.")
-            body, sentence = _split_at_summary(raw)
-            if body:
-                sections.append(f"{agent_name}:\n{body}")
-            if sentence:
-                content = re.sub(r"^In summary:\s*", "", sentence)
-                bullets.append(f"- {agent_name}: {content}")
-        combined = "\n\n".join(sections)
-        if bullets:
-            combined += "\n\nIn summary:\n" + "\n".join(bullets)
-        return combined or "No analysis results were returned."
+        return _synthesize_multi_agent_summary(data)
 
     return data.get("summary", "No summary available.")
 
 
-def _augment_query_with_refs(query: str, route: RouteDecision) -> str:
-    """When the query contains an invoice number and routes to PO/DO agents,
-    resolve the invoice's linked PO and DO numbers from the invoice DB and
-    append them as context so the sub-agents can build accurate SQL.
+_MULTI_AGENT_SYNTHESIS_PROMPT = """
+You are HostAgent, reconciling findings from multiple specialist agents into ONE
+unified conclusion for the user. Each agent answers from its own database, so their
+statements may overlap or even contradict. Your job is to cross-check them and give a
+single coherent analysis — NOT three separate summaries.
 
-    PO/DO agents have no access to the invoice database, so without this they
-    cannot resolve an invoice number to a matching PO or DO record.
+Guidelines:
+- Produce one overall analysis covering Invoice, PO, and DO together.
+- Explicitly reconcile any contradictions (e.g. one agent says no DO exists, another
+  finds DOs). State which is correct or call out the discrepancy as a data issue.
+- Highlight whether the three entities match correctly; flag mismatches or missing links.
+- Linkage is defined ONLY by invoice_item UUIDs. If an invoice item has no po_uuid/do_uuid,
+  there is no matched PO/DO — ignore any DOs/POs an agent found via PO numbers or po_list,
+  and state that no PO/DO is linked rather than listing those unrelated records.
+- Do NOT label sections by agent name. Do NOT repeat each agent's summary verbatim.
+- Never display UUID values; refer to records by their global numbers instead.
+- Keep it concise. End with a single sentence starting "In summary:".
+""".strip()
+
+
+def _synthesize_multi_agent_summary(data: dict) -> str:
+    """Combine per-agent results into a single cross-agent conclusion via the LLM."""
+    query = data.get("query", "")
+    agent_bodies: list[str] = []
+    for agent_name, agent_data in data.get("agent_results", {}).items():
+        raw = agent_data.get("summary", "No summary available.")
+        agent_bodies.append(f"{agent_name} findings:\n{raw}")
+    if not agent_bodies:
+        return "No analysis results were returned."
+
+    combined_findings = "\n\n".join(agent_bodies)
+    try:
+        from tools.gemini_sql import generate_content, get_client
+
+        client = get_client()
+        prompt = (
+            f"{_MULTI_AGENT_SYNTHESIS_PROMPT}\n\n"
+            f"User question: {query}\n\n"
+            f"Agent findings:\n{combined_findings}\n\n"
+            "Write the unified analysis now."
+        )
+        return generate_content(client, prompt)
+    except Exception:  # noqa: BLE001
+        # Fallback: concatenated agent bodies if synthesis is unavailable.
+        return combined_findings
+
+
+def _augment_query_with_refs(query: str, route: RouteDecision) -> str:
+    """Resolve cross-entity links through invoice_item UUIDs and append them as context
+    so the sub-agents can build accurate SQL.
+
+    invoice_item is the single pivot for Invoice ↔ PO ↔ DO matching. Whatever entity the
+    user names — an invoice, a PO, or a DO — its identifier is first resolved to a UUID,
+    and the other two entities are discovered purely through invoice_item.po_uuid /
+    invoice_item.do_uuid. Plain numbers and global numbers are NEVER used to establish the
+    link; they only seed the initial UUID lookup. PO/DO agents have no access to the
+    invoice database, so this enrichment lets them target the correct records.
     """
-    invoice_no = extract_invoice_no(query)
-    if not invoice_no:
-        return query
     agents = set(route["target_agents"])
     needs_po = "PurchaseOrderAgent" in agents
     needs_do = "DeliveryOrderAgent" in agents
-    if not (needs_po or needs_do):
-        return query
-    refs = get_invoice_linked_refs(invoice_no)
+    needs_inv = "InvoiceAgent" in agents
     additions: list[str] = []
-    if needs_po and refs["po_numbers"]:
-        additions.append(
-            f"Invoice {invoice_no} is linked to PO number(s): {', '.join(refs['po_numbers'])}."
-        )
-    if needs_do and refs["do_numbers"]:
-        additions.append(
-            f"Invoice {invoice_no} is linked to DO number(s): {', '.join(refs['do_numbers'])}."
-        )
-    if not additions:
-        return query
-    return query + " [Context: " + " ".join(additions) + "]"
+
+    # Resolve entity precedence: a PO/DO identifier (e.g. POGLOBAL..., DOGLOBAL...) can
+    # also match the invoice token pattern, so check PO/DO first and only fall back to
+    # invoice-as-entry when neither is present.
+    po_no = extract_po_no(query)
+    do_no = extract_do_no(query)
+    invoice_no = extract_invoice_no(query)
+
+    if invoice_no and not po_no and not do_no and (needs_po or needs_do):
+        # Entry = invoice → resolve linked PO/DO UUIDs via invoice_item.
+        refs = get_invoice_linked_refs(invoice_no)
+        if needs_po:
+            if refs.get("po_uuids"):
+                additions.append(
+                    f"Invoice {invoice_no} links via invoice_item.po_uuid to purchase_order.uuid: "
+                    f"{', '.join(refs['po_uuids'])}."
+                )
+            else:
+                additions.append(
+                    f"Invoice {invoice_no} has NO PO linked via invoice_item.po_uuid; "
+                    "report that no related PO exists and do not infer one from PO numbers."
+                )
+        if needs_do:
+            if refs.get("do_uuids"):
+                additions.append(
+                    f"Invoice {invoice_no} links via invoice_item.do_uuid to delivery_order.uuid: "
+                    f"{', '.join(refs['do_uuids'])}."
+                )
+            else:
+                additions.append(
+                    f"Invoice {invoice_no} has NO DO linked via invoice_item.do_uuid; "
+                    "report that no related DO exists and do not infer DOs from PO numbers or po_list."
+                )
+        if additions:
+            return query + " [Context: " + " ".join(additions) + "]"
+
+    po_no = extract_po_no(query)
+    if po_no and (needs_inv or needs_do):
+        # Entry = PO → resolve PO uuid, pivot through invoice_item.po_uuid.
+        refs = get_po_linked_refs(po_no)
+        if refs.get("po_uuids"):
+            additions.append(f"PO {po_no} resolves to purchase_order.uuid {', '.join(refs['po_uuids'])}.")
+        if needs_inv:
+            if refs.get("invoice_numbers"):
+                additions.append(
+                    f"Via invoice_item.po_uuid it links to invoice(s) {', '.join(refs['invoice_numbers'])} "
+                    f"(invoice.uuid: {', '.join(refs.get('invoice_uuids') or ['n/a'])}; "
+                    f"invoice_item.invoice_id: {', '.join(refs.get('invoice_ids') or ['n/a'])}). "
+                    "Retrieve the invoice by matching invoice.uuid or invoice.id."
+                )
+            else:
+                additions.append("No invoice is linked via invoice_item.po_uuid; report none.")
+        if needs_do:
+            if refs.get("do_uuids"):
+                additions.append(
+                    f"Via invoice_item it links to delivery_order.uuid: {', '.join(refs['do_uuids'])}."
+                )
+            else:
+                additions.append(
+                    "No DO is linked via invoice_item.do_uuid; report no related DO and do not "
+                    "infer DOs from PO numbers or po_list."
+                )
+        if additions:
+            return query + " [Context: " + " ".join(additions) + "]"
+
+    if do_no and (needs_inv or needs_po):
+        # Entry = DO → resolve DO uuid, pivot through invoice_item.do_uuid.
+        refs = get_do_linked_refs(do_no)
+        if refs.get("do_uuids"):
+            additions.append(f"DO {do_no} resolves to delivery_order.uuid {', '.join(refs['do_uuids'])}.")
+        if needs_inv:
+            if refs.get("invoice_numbers"):
+                additions.append(
+                    f"Via invoice_item.do_uuid it links to invoice(s) {', '.join(refs['invoice_numbers'])} "
+                    f"(invoice.uuid: {', '.join(refs.get('invoice_uuids') or ['n/a'])}; "
+                    f"invoice_item.invoice_id: {', '.join(refs.get('invoice_ids') or ['n/a'])}). "
+                    "Retrieve the invoice by matching invoice.uuid or invoice.id."
+                )
+            else:
+                additions.append("No invoice is linked via invoice_item.do_uuid; report none.")
+        if needs_po:
+            if refs.get("po_uuids"):
+                additions.append(
+                    f"Via invoice_item it links to purchase_order.uuid: {', '.join(refs['po_uuids'])}."
+                )
+            else:
+                additions.append("No PO is linked via invoice_item.po_uuid; report none.")
+        if additions:
+            return query + " [Context: " + " ".join(additions) + "]"
+
+    return query
 
 
 async def _send_to_agent(

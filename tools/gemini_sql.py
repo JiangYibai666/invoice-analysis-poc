@@ -9,6 +9,7 @@ from typing import Any
 
 from google import genai
 from google.genai import errors as genai_errors
+from google.genai import types as genai_types
 
 _MODELS = [
     "gemini-2.5-flash",
@@ -19,6 +20,10 @@ _MODELS = [
 _RETRYABLE_CODES = {404, 429, 500, 503}
 DEFAULT_SUMMARY_PREVIEW_ROWS = 20
 MAX_SUMMARY_PREVIEW_ROWS = 200
+
+# Deterministic config: temperature 0 ensures repeated identical questions yield the
+# same SQL and summaries, so the same request cannot produce divergent answers.
+_DETERMINISTIC_CONFIG = genai_types.GenerateContentConfig(temperature=0.0)
 
 
 def get_client() -> genai.Client:
@@ -42,8 +47,15 @@ def generate_content(client: genai.Client, prompt: str) -> str:
     last_exc: Exception | None = None
     for model in _MODELS:
         try:
-            response = client.models.generate_content(model=model, contents=prompt)
-            return response.text.strip()
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=_DETERMINISTIC_CONFIG,
+            )
+            text = response.text
+            if text is None:
+                raise RuntimeError("Model returned an empty response")
+            return text.strip()
         except Exception as exc:  # noqa: BLE001
             if _is_retryable(exc):
                 last_exc = exc
@@ -117,6 +129,12 @@ def summarize_results(
     return generate_content(client, prompt)
 
 
+def _is_uuid_column(name: str) -> bool:
+    """True if a column name denotes a UUID (used for matching, hidden from output)."""
+    lowered = name.lower()
+    return lowered == "uuid" or lowered.endswith("_uuid") or lowered.endswith("uuid")
+
+
 def select_display_columns(
     client: genai.Client,
     question: str,
@@ -125,9 +143,12 @@ def select_display_columns(
 ) -> list[str]:
     """Return the most relevant column names to display for the user's question.
 
-    If the result already has few columns, returns them unchanged.  Otherwise
-    makes a small LLM call to pick the most useful subset.
+    UUID columns are used for matching logic only and are always excluded from the
+    displayed output. If the result already has few columns, returns them unchanged.
+    Otherwise makes a small LLM call to pick the most useful subset.
     """
+    # UUIDs drive matching but should never be shown to the user.
+    columns = [c for c in columns if not _is_uuid_column(c)]
     if len(columns) <= max_cols:
         return columns
     prompt = (
@@ -143,7 +164,7 @@ def select_display_columns(
     try:
         selected = json.loads(raw)
         if isinstance(selected, list):
-            valid = [c for c in selected if c in columns]
+            valid = [c for c in selected if c in columns and not _is_uuid_column(c)]
             if valid:
                 return valid[:max_cols]
     except (json.JSONDecodeError, ValueError):

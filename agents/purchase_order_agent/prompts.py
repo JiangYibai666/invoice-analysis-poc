@@ -107,6 +107,15 @@ Rules:
   relevant identifier columns using OR, e.g.:
     WHERE po.po_number = 'X' OR po.po_global_number = 'X' OR po.uuid = 'X'
   This ensures the query works regardless of which identifier the user provided.
+- Cross-reference from invoice data: when a query provides an invoice's linked PO UUID
+  (sourced from invoices_uat.invoice_item.po_uuid), match ONLY on the uuid:
+    WHERE po.uuid = '<po_uuid>'
+  Never match on po_number / po_global_number for cross-entity linkage — uuid is the
+  single authoritative key. Numbers are display-only.
+- ERROR CONTROL: linked data is not guaranteed to be correct. If a question asks to
+  verify a match (e.g. "does PO X match its invoice/DO"), do NOT assume the records
+  agree. Return the actual PO fields so discrepancies are visible, and if no PO row
+  matches the uuid, return an empty result rather than fabricating one.
 - When displaying PO identifiers in results, always include `po_global_number` as the
   first/primary identifier column. `po_number` may repeat across different buyers or
   suppliers; `po_global_number` is unique system-wide and avoids confusion.
@@ -147,6 +156,8 @@ Guidelines:
   describe it as the PO record's delivery order reference/status summary. Do not
   imply that the DeliveryOrderAgent independently verified the DO record.
 - Always use the TRUE TOTAL figure when stating how many records match.
+- Never display UUID values (uuid, po_uuid, do_uuid, etc.) in the answer or tables.
+  UUIDs are matching keys only; refer to records by their global numbers instead.
 - End with a single sentence starting "In summary:".
 - Do NOT repeat the SQL.
 

@@ -126,6 +126,15 @@ Rules:
   relevant identifier columns using OR, e.g.:
     WHERE doo.delivery_order_number = 'X' OR doo.global_do_number = 'X' OR doo.uuid = 'X'
   This ensures the query works regardless of which identifier the user provided.
+- Cross-reference from invoice data: when a query provides an invoice's linked DO UUID
+  (sourced from invoices_uat.invoice_item.do_uuid), match ONLY on the uuid:
+    WHERE doo.uuid = '<do_uuid>'
+  Never match on delivery_order_number / global_do_number for cross-entity linkage —
+  uuid is the single authoritative key. Numbers are display-only.
+- ERROR CONTROL: linked data is not guaranteed to be correct. If a question asks to
+  verify a match (e.g. "does DO X match its invoice/PO"), do NOT assume the records
+  agree. Return the actual DO fields so discrepancies are visible, and if no DO row
+  matches the uuid, return an empty result rather than fabricating one.
 - When displaying DO identifiers in results, always include `global_do_number` as the
   first/primary identifier column. `delivery_order_number` may repeat across different
   buyers or suppliers; `global_do_number` is unique system-wide and avoids confusion.
@@ -143,17 +152,25 @@ Rules:
   a subquery or lateral join before aggregating.
 - NEVER use COUNT(DISTINCT ...) OVER(...) or any DISTINCT inside a window function;
   PostgreSQL does not support it. Use a subquery or CTE to deduplicate first.
+- MATCHING vs. PLAIN LOOKUP — read the HostAgent context carefully:
+    * If the context provides a delivery_order.uuid to match (sourced from
+      invoice_item.do_uuid), filter ONLY on doo.uuid = '<do_uuid>'. This is the
+      authoritative invoice↔DO link.
+    * If the context explicitly states "No DO is linked via invoice_item.do_uuid",
+      report that there is NO related delivery order. Do NOT infer DOs from PO numbers,
+      po_list, or PO-to-DO joins — those are not valid invoice-matching links.
+    * Only when the user asks a standalone DO/PO-relationship question (with no invoice
+      match) may you resolve DOs from a PO identifier via delivery_order_item ->
+      po_item -> purchase_order. Never use this path to satisfy invoice matching.
 - delivery_order.po_list is a plain text field (may contain one PO number or a
   comma-separated list). Do NOT unnest or split it in aggregates; treat it as an
   opaque text value or use ILIKE/= for matching.
-- If the user provides a PO identifier (for example POGLOBAL..., PO-..., or a
-  PO uuid) and asks for related delivery orders, treat it as a PO identifier,
-  not a DO identifier. Resolve related DOs by joining delivery_order_item ->
-  po_item -> purchase_order, matching against po.po_global_number, po.po_number,
-  po.uuid, doi.purchase_order_number, and doo.po_list when useful.
 - Focus on delivery order data. Use purchase_order and po_item only to resolve
   PO-to-DO relationships, not to perform general purchase order analytics.
 - Supplier names: JOIN public.suppliers s ON s.id = doo.supplier_id, use s.company_name.
+  delivery_order and delivery_order_item have NO supplier_name column — never select
+  doo.supplier_name or doi.supplier_name. Always obtain the supplier name from
+  public.suppliers.company_name. The supplier_id lives on delivery_order, not on its items.
 - Buyer names: JOIN public.buyer_information b ON b.id = doo.buyer_id, use b.buyer_name (NOT b.company_name).
 - Prefer readable aliases.
 """.strip()
@@ -169,6 +186,8 @@ Guidelines:
   identifier. Only fall back to `delivery_order_number` if `global_do_number` is not
   present in the result set.
 - Always use the TRUE TOTAL figure when stating how many records match.
+- Never display UUID values (uuid, po_uuid, do_uuid, etc.) in the answer or tables.
+  UUIDs are matching keys only; refer to records by their global numbers instead.
 - End with a single sentence starting "In summary:".
 - Do NOT repeat the SQL.
 

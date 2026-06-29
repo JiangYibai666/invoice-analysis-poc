@@ -48,6 +48,7 @@ TABLE public.buyer_information
 
 TABLE public.invoice_item  (12 475 rows)
   id                      bigint PK
+  uuid                    varchar(255)   unique identifier for this line item
   invoice_id              bigint FK -> public.invoice.id
   item_code               varchar(100)
   item_name               varchar(255)
@@ -57,19 +58,29 @@ TABLE public.invoice_item  (12 475 rows)
   invoice_unit_price      numeric
   invoice_net_price       numeric(15,2)
   invoice_tax_amount      numeric(15,2)
-  po_number               varchar(255)   linked PO number
-  po_uuid                 varchar(255)
+  po_number               varchar(255)   linked PO number (text reference)
+  po_uuid                 varchar(255)   ** AUTHORITATIVE UUID link to purchase_order.uuid **
+  po_item_id              bigint         numeric FK to po_item.id (secondary reference)
   po_qty                  numeric
   po_unit_price           numeric
   po_net_price            numeric(15,2)
-  do_number               varchar(255)   linked DO number
-  do_uuid                 varchar(255)
+  do_number               varchar(255)   linked DO number (text reference)
+  do_uuid                 varchar(255)   ** AUTHORITATIVE UUID link to delivery_order.uuid **
+  do_item_id              bigint         numeric FK to delivery_order_item.id (secondary reference)
   do_qty_converted        numeric
   do_qty_received         numeric
   gr_number               varchar(255)   goods receipt number
   tax_claimable           boolean
   contracted              boolean
   contracted_price        numeric
+
+IMPORTANT — 3-way matching rule:
+  invoice_item is the single source of truth for PO ↔ Invoice ↔ DO linkage.
+  Always use the UUID columns for the most reliable cross-entity matching:
+    • invoice_item.po_uuid  matches  purchase_order.uuid  (in the purchase database)
+    • invoice_item.do_uuid  matches  delivery_order.uuid  (in the purchase database)
+  Text-based numbers (po_number, do_number) and numeric IDs (po_item_id, do_item_id)
+  are secondary references only — prefer UUIDs whenever both are available.
 
 Common JOIN patterns:
   -- supplier and buyer names:
@@ -114,6 +125,21 @@ Rules:
   relevant identifier columns using OR, e.g.:
     WHERE i.invoice_no = 'X' OR i.invoice_global_no = 'X' OR i.uuid = 'X'
   This ensures the query works regardless of which identifier the user provided.
+- When HostAgent context provides an invoice.uuid or invoice_item.invoice_id (resolved
+  from a PO/DO), retrieve the invoice via the invoice_item.invoice_id pivot:
+    FROM public.invoice_item ii JOIN public.invoice i ON i.id = ii.invoice_id
+    WHERE i.uuid = '<invoice_uuid>' OR i.id = <invoice_id>
+  Prefer matching on i.uuid / i.id over numbers, since they are unique and unambiguous.
+- For 3-way matching (Invoice ↔ PO ↔ DO), invoice_item is the authoritative pivot.
+  Always use UUID columns for cross-entity matching:
+    • invoice_item.po_uuid links to purchase_order.uuid (in the purchase database)
+    • invoice_item.do_uuid links to delivery_order.uuid (in the purchase database)
+  Never use po_number/do_number or numeric IDs (po_item_id/do_item_id) for linkage —
+  numbers and global numbers are display-only. Use them only to find the starting record.
+- ERROR CONTROL: links are not guaranteed correct. When asked to verify a match
+  (e.g. "does invoice X match its PO/DO"), expose the invoice_item snapshot columns
+  (po_qty, po_unit_price, po_net_price, do_qty_received) alongside invoice values so any
+  discrepancy is visible; do not assume the values agree.
 - When displaying invoice identifiers in results, always include `invoice_global_no`
   as the first/primary identifier column. `invoice_no` may repeat across different
   buyers or suppliers; `invoice_global_no` is unique system-wide and avoids confusion.
@@ -147,6 +173,8 @@ Guidelines:
   primary identifier. Only fall back to `invoice_no` if `invoice_global_no` is not
   present in the result set.
 - For large monetary values use shorthand: 1 000 000 000 → 1.0B, 1 000 000 → 1.0M.
+- Never display UUID values (uuid, po_uuid, do_uuid, etc.) in the answer or tables.
+  UUIDs are matching keys only; refer to records by their global numbers instead.
 - Always use the TRUE TOTAL figure (provided explicitly) when stating how many records match.
   Never base the count on the number of rows shown in the sample.
 - End with a single sentence starting "In summary:" that captures the key takeaway.
