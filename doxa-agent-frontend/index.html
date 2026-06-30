@@ -35,11 +35,9 @@
     .brand-subtitle, .section-label, .pill, .route-pill, .sql-toggle, .table-title, .footer, .status-button, .code-label { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .brand-subtitle { margin-top: 4px; color: var(--faint); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
     .new-chat { display: flex; align-items: center; gap: 8px; width: 100%; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 9px 12px; color: var(--text); margin-bottom: 22px; }
-    .new-chat:hover, .example:hover, .example-card:hover, .status-button:hover { border-color: var(--accent); }
+    .new-chat:hover, .example-card:hover, .status-button:hover { border-color: var(--accent); }
     .section-label { color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; padding: 0 6px 9px; }
-    .examples { display: flex; flex-direction: column; gap: 1px; overflow: auto; flex: 1; }
-    .example { text-align: left; background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 9px 8px; color: var(--muted); font-size: 13px; line-height: 1.45; }
-    .profile { border-top: 1px solid var(--border); padding-top: 13px; margin-top: 8px; display: flex; align-items: center; gap: 9px; font-size: 13px; }
+    .profile { border-top: 1px solid var(--border); padding-top: 13px; margin-top: auto; display: flex; align-items: center; gap: 9px; font-size: 13px; }
     .avatar { width: 26px; height: 26px; border-radius: 50%; background: var(--border-strong); }
     .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
     .header { height: 53px; flex: 0 0 auto; border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 26px; gap: 12px; }
@@ -113,8 +111,6 @@
         <div><div class="brand-title">Doxa</div><div class="brand-subtitle">Invoice Agent</div></div>
       </div>
       <button class="new-chat" id="newChat"><span style="color:var(--accent);font-size:16px;">+</span> New chat</button>
-      <div class="section-label">Examples</div>
-      <div class="examples" id="sideExamples"></div>
       <div class="profile"><div class="avatar"></div><div>Finance Ops</div><div class="pill" style="margin-left:auto;">Live UI</div></div>
     </aside>
     <main class="main">
@@ -151,7 +147,7 @@
       <section class="thread" id="thread"><div class="thread-inner" id="messages"></div></section>
       <section class="composer" id="composer">
         <div class="composer-inner">
-          <div class="input-box"><textarea id="replyInput" placeholder="Reply to Doxa..."></textarea><button class="send" data-send="replyInput">^</button></div>
+          <div class="input-box"><textarea id="replyInput" placeholder="Ask Doxa..."></textarea><button class="send" data-send="replyInput">^</button></div>
           <div class="footer" id="footer"></div>
         </div>
       </section>
@@ -222,11 +218,10 @@
         if (rd.sql) sqls.push({ agent: "", sql: rd.sql });
       }
       const route = rd.route;
-      const routed = route ? (route.target_agents || []).map(a => ({ name: displayAgent(a), task: route.task_type || "" })) : null;
+      const routed = route ? (route.target_agents || []).map(a => ({ name: displayAgent(a) })) : null;
       return { error: "", text: stripTables(parsed.body), summary: parsed.summary, tables, sqls, routed };
     }
     function renderExamples() {
-      $("sideExamples").innerHTML = examples.map(ex => `<button class="example" data-q="${esc(ex.q)}">${esc(ex.q)}</button>`).join("");
       $("cardExamples").innerHTML = examples.map(ex => `<button class="example-card" data-q="${esc(ex.q)}"><strong>${esc(ex.label)}</strong><span>${esc(ex.q)}</span></button>`).join("");
       document.querySelectorAll("[data-q]").forEach(btn => btn.addEventListener("click", () => ask(btn.dataset.q)));
     }
@@ -262,7 +257,7 @@
     }
     function routingHtml(routed) {
       if (!routed || !routed.length) return `<div class="routing"><span class="pill">Host Agent</span></div>`;
-      return `<div class="routing"><span class="pill">Host Agent</span>${routed.map(r => `<span style="color:var(--faint);">-&gt;</span><span class="route-pill">${esc(r.name)}<span style="color:var(--muted);border-left:1px solid var(--accent-border);padding-left:7px;">${esc(r.task)}</span></span>`).join("")}</div>`;
+      return `<div class="routing"><span class="pill">Host Agent</span>${routed.map(r => `<span style="color:var(--faint);">&amp;</span><span class="route-pill">${esc(r.name)}</span>`).join("")}</div>`;
     }
     function renderFinal(id, data) {
       let html = routingHtml(data.routed);
@@ -284,9 +279,9 @@
       }));
     }
     function renderDemo(id, q) {
-      setTimeout(() => setAssistant(id, `${routingHtml([{ name: "Invoice Agent", task: "invoice_analysis" }])}<div class="work"><span><span class="blink"></span> <span class="blink"></span> <span class="blink"></span></span><span>Querying demo data...</span></div>`), 350);
+      setTimeout(() => setAssistant(id, `${routingHtml([{ name: "Invoice Agent" }])}<div class="work"><span><span class="blink"></span> <span class="blink"></span> <span class="blink"></span></span><span>Querying demo data...</span></div>`), 350);
       setTimeout(() => renderFinal(id, {
-        routed: [{ name: "Invoice Agent", task: "invoice_analysis" }],
+        routed: [{ name: "Invoice Agent" }],
         text: `Demo response for: ${q}`,
         sqls: [{ agent: "", sql: "SELECT invoice_status, COUNT(*) AS count FROM public.invoice GROUP BY invoice_status;" }],
         tables: [{ title: "", cols: ["invoice_status", "count"], rows: [["PENDING", "42"], ["APPROVED", "31"], ["OVERDUE", "9"]] }],
@@ -330,9 +325,8 @@
     function onBackendEvent(id, ev) {
       if (ev.state === "working" && ev.message && ev.message.includes("targets=")) {
         const m = ev.message.match(/route=(\S+)\s+targets=(.+)/);
-        const task = m ? m[1] : "";
         const agents = m ? m[2].split(",").map(s => s.trim()).filter(Boolean) : [];
-        const routed = agents.map(a => ({ name: displayAgent(a), task }));
+        const routed = agents.map(a => ({ name: displayAgent(a) }));
         setAssistant(id, `${routingHtml(routed)}<div class="work"><span><span class="blink"></span> <span class="blink"></span> <span class="blink"></span></span><span>Querying selected agents...</span></div>`);
       } else if (ev.state === "failed") {
         renderFinal(id, { routed: [], text: "", sqls: [], tables: [], summary: "", error: ev.message || "HostAgent request failed." });
