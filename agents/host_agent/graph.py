@@ -39,6 +39,22 @@ def _build_summary(data: dict) -> str:
     return data.get("summary", "No summary available.")
 
 
+_OFF_TOPIC_RESPONSE = (
+    "I'm an invoice analysis chat bot. I can help you explore invoices, purchase "
+    "orders (PO), delivery orders (DO), suppliers, buyers, and payments — including "
+    "checking whether an invoice matches its related PO and DO.\n\n"
+    "Here are some questions you can try:\n"
+    "  • \"Which invoices have been pending for more than 60 days?\"\n"
+    "  • \"Show me the top 10 suppliers by invoice count\"\n"
+    "  • \"Show top 10 purchase orders by value\"\n"
+    "  • \"Which delivery orders are pending?\"\n"
+    "  • \"Check INV000XXXXX and its related PO and DO\"\n"
+    "  • \"Show me the details of POGLOBAL000XXXXX and its related invoice and DO\"\n"
+    "  • \"What is the status of DOGLOBAL000XXXXX and its linked PO?\"\n\n"
+    "Ask me anything about your invoice, PO, or DO data."
+)
+
+
 _MULTI_AGENT_SYNTHESIS_PROMPT = """
 You are HostAgent, reconciling findings from multiple specialist agents into ONE
 unified conclusion for the user. Each agent answers from its own database, so their
@@ -276,6 +292,30 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
                 f"{route['task_type']} targets={','.join(route['target_agents'])}"
             ),
         )
+
+        # Off-topic / small talk: HostAgent answers directly without routing.
+        if route["task_type"] == "off_topic" or not route["target_agents"]:
+            report = {
+                "query": query,
+                "query_type": "off_topic",
+                "summary": _OFF_TOPIC_RESPONSE,
+                "raw_data": {"query_type": "off_topic", "route": route},
+            }
+            finalize_session(task_request.session_id, report)
+
+            from a2a.types import Artifact, DataPart
+            artifact = Artifact(
+                name="invoice_report",
+                parts=[DataPart(data=report)],
+            )
+            yield TaskEvent(
+                task_id=task_request.task_id,
+                state=TaskState.COMPLETED,
+                message="HostAgent: off-topic, answered directly",
+                artifact=artifact,
+            )
+            return
+
         invoice_data = await _dispatch_route(client, task_request.session_id, query, route)
 
         yield TaskEvent(

@@ -23,6 +23,7 @@ _VALID_TASK_TYPES = {
     "purchase_order_analysis",
     "delivery_order_analysis",
     "purchase_and_delivery_order_analysis",
+    "off_topic",
 }
 
 # Keyword hints used as a last-resort fallback when the LLM returns no valid agents.
@@ -51,6 +52,10 @@ def _normalize_route(payload: dict[str, Any]) -> RouteDecision:
     if not isinstance(raw_agents, list):
         raise ValueError("Router JSON must include target_agents as a list.")
 
+    task_type = str(payload.get("task_type") or "").strip()
+    if task_type not in _VALID_TASK_TYPES:
+        raise ValueError(f"Router selected invalid task_type: {task_type}")
+
     target_agents: list[AgentName] = []
     for raw_agent in raw_agents:
         if raw_agent not in _VALID_AGENTS:
@@ -58,13 +63,9 @@ def _normalize_route(payload: dict[str, Any]) -> RouteDecision:
         if raw_agent not in target_agents:
             target_agents.append(raw_agent)
 
-    if not target_agents:
-        # LLM returned an empty list — apply keyword fallback before giving up.
+    # Off-topic questions legitimately carry no agents; the HostAgent answers directly.
+    if not target_agents and task_type != "off_topic":
         raise ValueError("Router must select at least one target agent.")
-
-    task_type = str(payload.get("task_type") or "").strip()
-    if task_type not in _VALID_TASK_TYPES:
-        raise ValueError(f"Router selected invalid task_type: {task_type}")
 
     required_entities_raw = payload.get("required_entities", [])
     if not isinstance(required_entities_raw, list):

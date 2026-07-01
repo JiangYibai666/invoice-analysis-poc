@@ -67,7 +67,11 @@ Routing rules:
 - If the question is ambiguous, pick the single most relevant agent based on key
   nouns (invoice → InvoiceAgent, purchase/PO → PurchaseOrderAgent,
   delivery/DO → DeliveryOrderAgent).
-- You MUST always include at least one agent in target_agents. Never return an empty list.
+- OFF-TOPIC / SMALL TALK: If the question is NOT about invoices, purchase orders,
+  delivery orders, suppliers, buyers, payments, or their matching (e.g. greetings,
+  "what's your name?", general knowledge, coding help, jokes), return an EMPTY
+  target_agents list ([]) and task_type "off_topic". Do not force an agent.
+- Otherwise, you MUST include at least one agent in target_agents.
 
 Return ONLY valid JSON with exactly these keys:
 {{
@@ -87,6 +91,7 @@ Allowed task_type values:
 - purchase_order_analysis
 - delivery_order_analysis
 - purchase_and_delivery_order_analysis
+- off_topic
 
 User question: {query}
 """.strip()
