@@ -15,17 +15,27 @@ load_dotenv()
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
-_TASK_DB_PARAMS: dict[str, Any] = {
-    "host": os.getenv("TASK_DB_HOST", "localhost"),
-    "port": int(os.getenv("TASK_DB_PORT", "5432")),
-    "user": os.getenv("TASK_DB_USER", "postgres"),
-    "password": os.getenv("TASK_DB_PASSWORD", "postgres"),
-    "dbname": os.getenv("TASK_DB_NAME", "postgres"),
-}
+
+def _dotenv_override() -> bool:
+    raw = os.getenv("DOXA_DOTENV_OVERRIDE")
+    if raw is None:
+        return True
+    return raw.lower() not in {"0", "false", "no", "off"}
+
+
+def _task_db_params() -> dict[str, Any]:
+    load_dotenv(override=_dotenv_override())
+    return {
+        "host": os.getenv("TASK_DB_HOST", "localhost"),
+        "port": int(os.getenv("TASK_DB_PORT", "5432")),
+        "user": os.getenv("TASK_DB_USER", "postgres"),
+        "password": os.getenv("TASK_DB_PASSWORD", "postgres"),
+        "dbname": os.getenv("TASK_DB_NAME", "postgres"),
+    }
 
 
 def _connect() -> psycopg2.extensions.connection:
-    conn = psycopg2.connect(**_TASK_DB_PARAMS)
+    conn = psycopg2.connect(**_task_db_params())
     conn.autocommit = False
     return conn
 

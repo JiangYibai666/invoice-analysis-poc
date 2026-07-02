@@ -10,8 +10,6 @@ from urllib.parse import urlparse
 import uvicorn
 from dotenv import load_dotenv
 
-from storage.task_store import init_db
-
 
 DEFAULT_BIND_HOST = "127.0.0.1"
 DEFAULT_AGENT_PORTS = {
@@ -32,6 +30,17 @@ AGENT_PORT_ENV = {
     "PurchaseOrderAgent": "PURCHASE_ORDER_AGENT_PORT",
     "DeliveryOrderAgent": "DELIVERY_ORDER_AGENT_PORT",
 }
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.lower() not in {"0", "false", "no", "off"}
+
+
+def _load_env() -> None:
+    load_dotenv(override=_env_bool("DOXA_DOTENV_OVERRIDE", True))
 
 
 def _serve(app_import_str: str, host: str, port: int) -> None:
@@ -102,7 +111,10 @@ def _configure_default_cors(frontend_url: str) -> None:
 
 
 def main() -> None:
-    load_dotenv()
+    _load_env()
+
+    from storage.task_store import init_db
+
     init_db()
 
     host = os.getenv("DOXA_BIND_HOST", DEFAULT_BIND_HOST)

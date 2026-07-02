@@ -95,6 +95,7 @@ PURCHASE_ORDER_AGENT_URL=http://127.0.0.1:10002
 DELIVERY_ORDER_AGENT_URL=http://127.0.0.1:10003
 
 # Local server settings used by python main.py
+DOXA_DOTENV_OVERRIDE=1
 DOXA_BIND_HOST=127.0.0.1
 HOST_AGENT_PORT=10000
 INVOICE_AGENT_PORT=10001
@@ -108,6 +109,10 @@ DOXA_CORS_ORIGINS=http://127.0.0.1:8080,http://localhost:8080
 # Recent-turn conversation memory
 DOXA_MEMORY_TURN_LIMIT=6
 ```
+
+`DOXA_DOTENV_OVERRIDE=1` makes values in `.env` override stale shell
+environment variables when the local POC starts. Set it to `0` if deployment
+environment variables should take precedence over `.env`.
 
 ### 4. Run
 

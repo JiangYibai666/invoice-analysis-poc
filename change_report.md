@@ -16,6 +16,7 @@ specialist-agent dispatch.
 
 - `a2a/types.py`
 - `agents/host_agent/graph.py`
+- `main.py`
 - `cli/chat.py`
 - `doxa-agent-frontend/index.html`
 - `doxa-agent-frontend/DoxaApp.dc.html`
@@ -69,6 +70,13 @@ specialist-agent dispatch.
    - `start_conversation_turn()` locks the conversation row with `FOR UPDATE`,
      calculates the next index, and inserts a placeholder turn in one transaction.
    - Concurrent requests for the same conversation now receive distinct indexes.
+10. Fixed stale environment variable handling:
+    - `python main.py` now loads `.env` with override enabled by default.
+    - Gemini client creation refreshes `.env` before reading `GEMINI_API_KEY`.
+    - Task-store connections read database settings at connection time instead of
+      freezing them at import time.
+    - `DOXA_DOTENV_OVERRIDE=0` can be used when deployment environment variables
+      should take precedence over `.env`.
 
 ### Configuration
 
@@ -80,6 +88,9 @@ Recent context length is controlled by `DOXA_MEMORY_TURN_LIMIT`.
 
 Setting `DOXA_MEMORY_TURN_LIMIT=0` disables recent-turn context injection while
 leaving turn persistence enabled.
+
+`DOXA_DOTENV_OVERRIDE=1` is the default local behavior. It prevents stale shell
+values such as an old `GEMINI_API_KEY` from overriding the project `.env`.
 
 ### Behavior
 
@@ -116,3 +127,8 @@ Google project billing/quota, API enablement, and model access are fixed.
 - Query rewrite tests confirmed follow-up questions with references are resolved,
   while unrelated questions and questions with explicit invoice numbers are not
   rewritten.
+- Startup verification confirmed `python main.py` reaches the CLI and starts all
+  local agents/frontend after stale processes are stopped.
+- Environment verification confirmed that even with a bad shell-level
+  `GEMINI_API_KEY`, Gemini routing uses the current `.env` key when
+  `DOXA_DOTENV_OVERRIDE=1`.

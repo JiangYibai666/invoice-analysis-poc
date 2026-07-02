@@ -7,6 +7,7 @@ import os
 import re
 from typing import Any
 
+from dotenv import load_dotenv
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
@@ -27,7 +28,15 @@ MAX_SUMMARY_PREVIEW_ROWS = 200
 _DETERMINISTIC_CONFIG = genai_types.GenerateContentConfig(temperature=0.0)
 
 
+def _dotenv_override() -> bool:
+    raw = os.getenv("DOXA_DOTENV_OVERRIDE")
+    if raw is None:
+        return True
+    return raw.lower() not in {"0", "false", "no", "off"}
+
+
 def get_client() -> genai.Client:
+    load_dotenv(override=_dotenv_override())
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError(
