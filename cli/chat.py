@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from uuid import uuid4
 
 from rich.console import Console
 from rich.panel import Panel
@@ -247,9 +248,10 @@ def _display_routing(message: str) -> None:
     console.print(f"[dim]→ Routing to:[/dim] {agent_labels}")
 
 
-async def ask_once(query: str) -> None:
+async def ask_once(query: str, conversation_id: str) -> None:
     import httpx as _httpx
     request = TaskRequest(
+        conversation_id=conversation_id,
         source_agent="CLI",
         target_agent="HostAgent",
         message=Message(role="user", parts=[TextPart(text=query)]),
@@ -279,6 +281,7 @@ async def ask_once(query: str) -> None:
 
 
 def run_cli() -> None:
+    conversation_id = f"conv_{uuid4().hex[:12]}"
     console.print(Panel.fit("Invoice Analysis CLI  (type 'help' or 'exit')", title="invoice-analysis-poc"))
     while True:
         try:
@@ -292,4 +295,4 @@ def run_cli() -> None:
         if query.lower() == "help":
             console.print(_HELP)
             continue
-        asyncio.run(ask_once(query))
+        asyncio.run(ask_once(query, conversation_id))

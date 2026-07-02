@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import AsyncIterator
 from typing import Optional
 
@@ -9,6 +10,12 @@ import httpx
 from a2a.client import A2AClient
 from a2a.types import Artifact, DataPart, Message, TaskEvent, TaskRequest, TaskState, TextPart
 from agents.host_agent.router import RouteDecision, route_query
+from storage.memory_store import (
+    ConversationTurn,
+    build_memory_context,
+    save_conversation_turn,
+    start_conversation_turn,
+)
 from storage.task_store import create_session, finalize_session
 from tools.document_match_query import (
     extract_do_no,
@@ -20,6 +27,13 @@ from tools.document_match_query import (
 )
 
 
+_REFERENCE_CUE_RE = re.compile(
+    r"\b(it|its|that|this|previous|last|same|related|linked|above|those|them)\b"
+    r"|它|其|这个|那个|这些|那些|上一个|上一|刚才|之前|相关|关联",
+    re.IGNORECASE,
+)
+
+
 def _extract_data(artifact: Optional[Artifact]) -> dict:
     if artifact is None:
         return {}
@@ -27,6 +41,63 @@ def _extract_data(artifact: Optional[Artifact]) -> dict:
         if getattr(part, "type", "") == "data":
             return part.data
     return {}
+
+
+def _latest_entity_refs(turns: list[ConversationTurn]) -> dict[str, str]:
+    refs: dict[str, str] = {}
+    for turn in reversed(turns):
+        text = " ".join(
+            part for part in (
+                turn.get("user_query"),
+                turn.get("memory_query"),
+                turn.get("assistant_summary"),
+            )
+            if part
+        )
+        if "po" not in refs:
+            po_no = extract_po_no(text)
+            if po_no:
+                refs["po"] = po_no
+        if "do" not in refs:
+            do_no = extract_do_no(text)
+            if do_no:
+                refs["do"] = do_no
+        if "invoice" not in refs:
+            invoice_no = extract_invoice_no(text)
+            if invoice_no and invoice_no not in {refs.get("po"), refs.get("do")}:
+                refs["invoice"] = invoice_no
+        if len(refs) == 3:
+            break
+    return refs
+
+
+def _rewrite_query_with_memory(query: str, turns: list[ConversationTurn]) -> tuple[str, dict]:
+    """Resolve short follow-up references without appending full history to the query."""
+    refs = _latest_entity_refs(turns)
+    memory_context = build_memory_context(turns)
+    memory_payload = {
+        "recent_turn_count": len(turns),
+        "latest_refs": refs,
+        "context": memory_context,
+    }
+
+    has_current_ref = bool(extract_po_no(query) or extract_do_no(query) or extract_invoice_no(query))
+    if not turns or not refs or has_current_ref or not _REFERENCE_CUE_RE.search(query):
+        memory_payload["rewritten"] = False
+        memory_payload["rewritten_query"] = query
+        return query, memory_payload
+
+    labels = []
+    if refs.get("invoice"):
+        labels.append(f"invoice {refs['invoice']}")
+    if refs.get("po"):
+        labels.append(f"purchase order {refs['po']}")
+    if refs.get("do"):
+        labels.append(f"delivery order {refs['do']}")
+    rewritten_query = f"{query} Referring to the recent conversation's {', '.join(labels)}."
+    memory_payload["rewritten"] = True
+    memory_payload["rewritten_query"] = rewritten_query
+    return rewritten_query, memory_payload
 
 
 def _build_summary(data: dict) -> str:
@@ -217,12 +288,15 @@ async def _send_to_agent(
     query: str,
     target_agent: str,
     route: RouteDecision,
+    memory_payload: dict | None = None,
 ) -> dict:
     route_data = {
         "route_task_type": route["task_type"],
         "route_target_agents": route["target_agents"],
         "route_reason": route["reason"],
     }
+    if memory_payload is not None:
+        route_data["memory"] = memory_payload
 
     req = TaskRequest(
         session_id=session_id,
@@ -240,12 +314,18 @@ async def _send_to_agent(
     return _extract_data(resp.artifact)
 
 
-async def _dispatch_route(client: A2AClient, session_id: str, query: str, route: RouteDecision) -> dict:
+async def _dispatch_route_with_memory(
+    client: A2AClient,
+    session_id: str,
+    query: str,
+    route: RouteDecision,
+    memory_payload: dict | None,
+) -> dict:
     target_agents = route["target_agents"]
     augmented_query = _augment_query_with_refs(query, route)
     results = await asyncio.gather(
         *(
-            _send_to_agent(client, session_id, augmented_query, agent_name, route)
+            _send_to_agent(client, session_id, augmented_query, agent_name, route, memory_payload)
             for agent_name in target_agents
         )
     )
@@ -269,7 +349,14 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
         part.text for part in task_request.message.parts
         if getattr(part, "type", "") == "text"
     )
-    create_session(task_request.session_id, query)
+    conversation_id = task_request.conversation_id or task_request.session_id
+    turn_index, recent_turns = start_conversation_turn(
+        conversation_id,
+        task_request.session_id,
+        query,
+    )
+    rewritten_query, memory_payload = _rewrite_query_with_memory(query, recent_turns)
+    create_session(task_request.session_id, query, conversation_id, turn_index)
 
     yield TaskEvent(
         task_id=task_request.task_id,
@@ -283,7 +370,7 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
     _sub_agent_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=10.0)
     client = A2AClient(timeout=_sub_agent_timeout)
     try:
-        route = route_query(query)
+        route = route_query(rewritten_query)
         yield TaskEvent(
             task_id=task_request.task_id,
             state=TaskState.WORKING,
@@ -299,9 +386,27 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
                 "query": query,
                 "query_type": "off_topic",
                 "summary": _OFF_TOPIC_RESPONSE,
-                "raw_data": {"query_type": "off_topic", "route": route},
+                "raw_data": {
+                    "query_type": "off_topic",
+                    "route": route,
+                    "memory": {
+                        "conversation_id": conversation_id,
+                        "turn_index": turn_index,
+                        "used_recent_turns": len(recent_turns),
+                        "rewritten_query": rewritten_query,
+                        "rewritten": memory_payload.get("rewritten", False),
+                    },
+                },
             }
             finalize_session(task_request.session_id, report)
+            save_conversation_turn(
+                conversation_id,
+                task_request.session_id,
+                turn_index,
+                query,
+                rewritten_query,
+                report,
+            )
 
             from a2a.types import Artifact, DataPart
             artifact = Artifact(
@@ -316,7 +421,13 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
             )
             return
 
-        invoice_data = await _dispatch_route(client, task_request.session_id, query, route)
+        invoice_data = await _dispatch_route_with_memory(
+            client,
+            task_request.session_id,
+            rewritten_query,
+            route,
+            memory_payload,
+        )
 
         yield TaskEvent(
             task_id=task_request.task_id,
@@ -329,10 +440,27 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
             "query": query,
             "query_type": invoice_data.get("query_type"),
             "summary": summary,
-            "raw_data": invoice_data,
+            "raw_data": {
+                **invoice_data,
+                "memory": {
+                    "conversation_id": conversation_id,
+                    "turn_index": turn_index,
+                    "used_recent_turns": len(recent_turns),
+                    "rewritten_query": rewritten_query,
+                    "rewritten": memory_payload.get("rewritten", False),
+                },
+            },
         }
 
         finalize_session(task_request.session_id, report)
+        save_conversation_turn(
+            conversation_id,
+            task_request.session_id,
+            turn_index,
+            query,
+            rewritten_query,
+            report,
+        )
 
         from a2a.types import Artifact, DataPart
         artifact = Artifact(

@@ -45,17 +45,26 @@ def init_db() -> None:
         conn.close()
 
 
-def create_session(session_id: str, user_query: str) -> None:
+def create_session(
+    session_id: str,
+    user_query: str,
+    conversation_id: str | None = None,
+    turn_index: int | None = None,
+) -> None:
     conn = _connect()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO invoice_poc_sessions (session_id, user_query)
-                VALUES (%s, %s)
-                ON CONFLICT (session_id) DO NOTHING
+                INSERT INTO invoice_poc_sessions
+                    (session_id, conversation_id, turn_index, user_query)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (session_id) DO UPDATE
+                    SET conversation_id = COALESCE(EXCLUDED.conversation_id, invoice_poc_sessions.conversation_id),
+                        turn_index = COALESCE(EXCLUDED.turn_index, invoice_poc_sessions.turn_index),
+                        user_query = EXCLUDED.user_query
                 """,
-                (session_id, user_query),
+                (session_id, conversation_id, turn_index, user_query),
             )
         conn.commit()
     finally:

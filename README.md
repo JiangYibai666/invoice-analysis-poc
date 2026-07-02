@@ -104,6 +104,9 @@ DOXA_FRONTEND_PORT=8080
 DOXA_OPEN_FRONTEND=1
 DOXA_FRONTEND_MODE=live
 DOXA_CORS_ORIGINS=http://127.0.0.1:8080,http://localhost:8080
+
+# Recent-turn conversation memory
+DOXA_MEMORY_TURN_LIMIT=6
 ```
 
 ### 4. Run
@@ -250,7 +253,8 @@ PO/DO analytics and matching reads PO/DO reference data from
 
 The task/session store creates its own `invoice_poc_*` tables in the
 `TASK_DB_NAME` database and does not write to the invoice or purchase data
-databases.
+databases. Recent-turn conversation memory is stored in the task database and
+is bounded by `DOXA_MEMORY_TURN_LIMIT` (`6` turns by default).
 
 ## Safety Model
 

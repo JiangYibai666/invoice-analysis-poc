@@ -318,11 +318,17 @@ class Component extends DCLogic {
     this.transcriptRef = React.createRef();
     let mode = 'demo';
     let backendUrl = 'http://127.0.0.1:10000';
+    let conversationId = this.newConversationId();
     try {
       const m = localStorage.getItem('doxa.mode'); if (m) mode = m;
       const u = localStorage.getItem('doxa.backendUrl'); if (u) backendUrl = u;
+      const c = sessionStorage.getItem('doxa.conversationId'); if (c) conversationId = c;
     } catch (e) {}
-    this.state = { view: 'welcome', input: '', messages: [], seq: 1, mode, backendUrl, urlDraft: backendUrl, settingsOpen: false };
+    try { sessionStorage.setItem('doxa.conversationId', conversationId); } catch (e) {}
+    this.state = {
+      view: 'welcome', input: '', messages: [], seq: 1, mode, backendUrl,
+      urlDraft: backendUrl, settingsOpen: false, conversationId
+    };
   }
 
   themes() {
@@ -375,7 +381,16 @@ class Component extends DCLogic {
 
   componentDidUpdate() { const el = this.transcriptRef.current; if (el) el.scrollTop = el.scrollHeight; }
 
-  newChat() { this.setState({ view: 'welcome', messages: [], input: '' }); }
+  newConversationId() {
+    if (window.crypto && crypto.randomUUID) return 'conv_' + crypto.randomUUID().replaceAll('-', '').slice(0, 12);
+    return 'conv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+
+  newChat() {
+    const conversationId = this.newConversationId();
+    try { sessionStorage.setItem('doxa.conversationId', conversationId); } catch (e) {}
+    this.setState({ view: 'welcome', messages: [], input: '', conversationId });
+  }
   onInput(e) { this.setState({ input: e.target.value }); }
   onKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.submit(); } }
   submit() { const q = (this.state.input || '').trim(); if (q) this.ask(q); }
@@ -468,7 +483,12 @@ class Component extends DCLogic {
 
   async askBackend(aId, q) {
     const base = (this.state.backendUrl || '').replace(/\/+$/, '');
-    const payload = { source_agent: 'CLI', target_agent: 'HostAgent', message: { role: 'user', parts: [{ type: 'text', text: q }] } };
+    const payload = {
+      conversation_id: this.state.conversationId,
+      source_agent: 'CLI',
+      target_agent: 'HostAgent',
+      message: { role: 'user', parts: [{ type: 'text', text: q }] }
+    };
     try {
       const resp = await fetch(base + '/tasks/sendSubscribe', {
         method: 'POST',

@@ -1,98 +1,118 @@
 # Change Report
 
-## Prompt/output format fixes
+Date: 2026-07-02
 
-Date: 2026-06-17
+## Recent-turn Conversation Memory MVP
 
-### 1. Render all markdown tables returned by summaries
+### Summary
 
-- File changed: `cli/chat.py`
-- Problem: `_render_summary()` only searched for the first markdown table block, so later tables allowed by the summary prompts were not displayed.
-- Change: Reworked `_render_summary()` to iterate over every markdown table block and render text/table segments in their original order.
-- Impact: Multi-table summaries from InvoiceAgent, PurchaseOrderAgent, and DeliveryOrderAgent are no longer silently truncated by the CLI.
+Implemented a recent N-turn context memory MVP without adding a vector database.
+The system now keeps a stable `conversation_id` across multiple user turns, stores
+completed conversation turns in PostgreSQL, and lets HostAgent inject recent
+conversation context through a resolved follow-up query before routing and
+specialist-agent dispatch.
 
-### 2. Make JSON prompt examples valid JSON
+### Files changed
 
-- Files changed:
-  - `agents/host_agent/prompts.py`
-  - `agents/purchase_order_agent/prompts.py`
-  - `agents/delivery_order_agent/prompts.py`
-- Problem: Several prompts asked for JSON but showed pseudo-JSON examples using inline union syntax such as `"A" | "B"`, which is not valid JSON.
-- Change: Replaced pseudo-JSON examples with valid JSON objects and moved allowed enum values into separate bullet lists.
-- Impact: The router and task classifiers receive clearer instructions and are less likely to return invalid JSON.
+- `a2a/types.py`
+- `agents/host_agent/graph.py`
+- `cli/chat.py`
+- `doxa-agent-frontend/index.html`
+- `doxa-agent-frontend/DoxaApp.dc.html`
+- `.env.example`
+- `README.md`
+- `storage/schema.sql`
+- `storage/task_store.py`
+- `storage/memory_store.py`
+- `agents/host_agent/router.py`
+- `tools/gemini_sql.py`
+- `change_report.md`
 
-### 3. Dynamically size summary preview rows
+### Key changes
 
-- File changed: `tools/gemini_sql.py`
-- Problem: `summarize_results()` always sent only the first 20 rows to the model, even when the user explicitly requested more rows such as `top 50`.
-- Change: Added `_requested_preview_rows()` to extract requested row counts from the user question and use that count for the summary preview, capped by available rows and the hard query result cap.
-- Impact: When users request a specific larger result count, the summarizer can now see and summarize the requested rows instead of being limited to 20 by default.
+1. Added optional `conversation_id` to `TaskRequest` so one conversation can span
+   multiple request-level `session_id` values.
+2. Added PostgreSQL tables and columns for conversation memory:
+   - `invoice_poc_conversations`
+   - `invoice_poc_conversation_turns`
+   - `invoice_poc_sessions.conversation_id`
+   - `invoice_poc_sessions.turn_index`
+3. Added `storage/memory_store.py` with helpers to:
+   - create/update conversations
+   - reserve the next turn index inside a database transaction
+   - load only completed recent turns
+   - save each completed turn with original query, rewritten query, summary, and final report
+4. Updated HostAgent to:
+   - resolve the active conversation
+   - reserve each conversation turn before routing
+   - rewrite short follow-up questions into a single resolved query when recent
+     context is needed
+   - send recent memory as structured `DataPart` metadata instead of appending
+     the full history to the user question
+   - keep the original user query in the final report
+   - save the completed turn after finalization
+5. Updated CLI to reuse one `conversation_id` for the lifetime of the interactive
+   CLI process.
+6. Updated the browser frontend to keep one `conversation_id` in `sessionStorage`
+   and generate a new one when the user clicks New chat.
+7. Documented `DOXA_MEMORY_TURN_LIMIT` in `.env.example`, `README.md`, and this
+   change report.
+8. Added Gemini access-error hardening:
+   - HostAgent router still falls back to keyword routing when the model returns
+     malformed routing JSON.
+   - Gemini runtime/configuration failures, including missing API keys and 401/403
+     authorization errors, are no longer silently downgraded to keyword routing.
+   - Gemini API authorization failures are formatted as actionable configuration
+     errors that mention `GEMINI_API_KEY`, project access, API enablement, billing,
+     quota, and model access.
+9. Fixed the conversation turn race:
+   - `start_conversation_turn()` locks the conversation row with `FOR UPDATE`,
+     calculates the next index, and inserts a placeholder turn in one transaction.
+   - Concurrent requests for the same conversation now receive distinct indexes.
 
-### 4. Remove forced InvoiceAgent routing for document matching
+### Configuration
 
-- File changed: `agents/host_agent/prompts.py`
-- Problem: The routing prompt required `InvoiceAgent` to be included for document matching, but the two-way and three-way matching flow is handled by PurchaseOrderAgent and DeliveryOrderAgent, and HostAgent does not consume an InvoiceAgent result in that matching branch.
-- Change: Removed the instruction that always included InvoiceAgent alongside PurchaseOrderAgent or DeliveryOrderAgent for document matching.
-- Impact: The router prompt now better matches the current implementation: invoice-to-PO matching can route to PurchaseOrderAgent, invoice-to-DO matching can route to DeliveryOrderAgent, and three-way matching can route to both matching agents without an unused InvoiceAgent call.
+Recent context length is controlled by `DOXA_MEMORY_TURN_LIMIT`.
 
-### 5. Clarify combined PO/DO matching summary wording
+- Default: `6`
+- Minimum effective value: `0`
+- Maximum effective value: `20`
 
-- File changed: `agents/host_agent/graph.py`
-- Problem: When both PO and DO checks passed, HostAgent said "Two-way and three-way document matching passed" even though the current deterministic checks are separate Invoice-to-PO and Invoice-to-DO checks, not an additional direct PO-vs-DO consistency check.
-- Change: Updated the combined conclusion to say "Invoice-to-PO and Invoice-to-DO checks passed" and stripped nested sub-agent `In summary:` sentences before HostAgent adds its final summary.
-- Impact: Results for questions such as `Check INV00020608 and its related do and po` now describe exactly what was checked while still showing both PO and DO detail tables.
+Setting `DOXA_MEMORY_TURN_LIMIT=0` disables recent-turn context injection while
+leaving turn persistence enabled.
 
-### 6. Teach LLM agents how to resolve PO-to-DO cross-domain lookups
+### Behavior
 
-- Files changed:
-  - `agents/delivery_order_agent/prompts.py`
-  - `agents/purchase_order_agent/prompts.py`
-- Problem: For questions such as `Check POGLOBAL00008981 and its related invoice and DO`, PurchaseOrderAgent could describe a DO reference from `public.purchase_order.delivery_order_number`, while DeliveryOrderAgent could fail to find DO records because it was not explicitly told how to resolve a PO global number into DO-side records.
-- Change: Expanded DeliveryOrderAgent's schema context with minimal `public.purchase_order` and `public.po_item` fields, plus join patterns for resolving local/global PO identifiers through `delivery_order_item`, `po_item`, `purchase_order`, and `delivery_order.po_list`. Added SQL prompt guidance to treat `POGLOBAL...`, `PO-...`, and PO UUID values as PO identifiers when the user asks for related DOs. Updated PurchaseOrderAgent's summary guidance to label `delivery_order_number` and `do_status` from `public.purchase_order` as PO-record references/status summaries rather than independently verified DO facts.
-- Impact: Cross-domain PO questions remain LLM-generated SQL flows, but the LLM now has the schema and relationship rules needed to find related DOs from a PO global number and to avoid contradictory source wording.
+Example:
 
-## Frontend hosting and runtime configuration
+1. User asks: `Check three-way matching for invoice INV-00000001`
+2. User asks next: `What about its PO?`
+3. HostAgent rewrites the second question to a single resolved question referring
+   to `INV-00000001`, while also passing structured memory metadata to the
+   specialist agents.
 
-Date: 2026-06-28
+The MVP intentionally avoids long-term semantic/vector memory. It only uses
+bounded recent-turn context from the same conversation.
 
-### 1. Start the browser frontend from `python main.py`
+### Runtime note
 
-- Files changed:
-  - `main.py`
-  - `frontend_app.py`
-  - `README.md`
-- Problem: The frontend files existed in the project, but `python main.py` only started the agent backends and CLI. Users had to serve the frontend separately, and opening the original `.dc.html` page could produce a blank page if its external runtime dependencies were unavailable.
-- Change: Added a FastAPI frontend app and included it in the `main.py` process list. Startup now launches HostAgent, InvoiceAgent, PurchaseOrderAgent, DeliveryOrderAgent, and the browser frontend together. The frontend URL is printed and opened automatically unless `DOXA_OPEN_FRONTEND=0` is set.
-- Impact: Running `python main.py` now provides both the CLI and browser UI. The frontend is available by default at `http://127.0.0.1:8080/`.
+If Gemini returns an error such as `403 PERMISSION_DENIED` or `Lightning dunning
+decision is deny`, HostAgent now reports an actionable Gemini configuration or
+authorization error instead of silently falling back to keyword routing. LLM-powered
+SQL generation and summarization remain unavailable until the Gemini API key,
+Google project billing/quota, API enablement, and model access are fixed.
 
-### 2. Add a self-contained browser UI entrypoint
+### Verification
 
-- Files changed:
-  - `doxa-agent-frontend/index.html`
-  - `frontend_app.py`
-- Problem: The original generated frontend page depended on the bundled DC runtime loading React from a CDN. When the browser could not fetch that dependency, the raw template was hidden and the user saw a blank page.
-- Change: Added `doxa-agent-frontend/index.html`, a self-contained HTML/CSS/JavaScript frontend that talks to the existing HostAgent `POST /tasks/sendSubscribe` SSE endpoint. `frontend_app.py` serves this file at `/` and keeps the original `DoxaApp.dc.html` available for compatibility.
-- Impact: The default frontend no longer depends on CDN-loaded React and avoids the blank-page failure mode while preserving the existing backend protocol.
-
-### 3. Make frontend/backend ports and origins configurable
-
-- Files changed:
-  - `main.py`
-  - `frontend_app.py`
-  - `agents/host_agent/server.py`
-  - `doxa-agent-frontend/index.html`
-  - `.env.example`
-  - `README.md`
-- Problem: The initial integration hardcoded local addresses and ports in multiple places, and HostAgent used permissive wildcard CORS. This made non-default local setups harder and left connection policy implicit.
-- Change: Added environment-driven runtime settings:
-  - `DOXA_BIND_HOST`
-  - `HOST_AGENT_PORT`
-  - `INVOICE_AGENT_PORT`
-  - `PURCHASE_ORDER_AGENT_PORT`
-  - `DELIVERY_ORDER_AGENT_PORT`
-  - `DOXA_FRONTEND_PORT`
-  - `DOXA_OPEN_FRONTEND`
-  - `DOXA_FRONTEND_MODE`
-  - `DOXA_CORS_ORIGINS`
-  The frontend now loads `/config.js` to discover the HostAgent URL instead of hardcoding it in the page. HostAgent CORS now defaults to the local frontend origins and can be widened explicitly through `DOXA_CORS_ORIGINS`.
-- Impact: Defaults still support the existing one-command local POC, but ports, bind host, frontend mode, automatic browser opening, and CORS policy can now be changed without code edits.
+- Python compilation passed for A2A types, storage, HostAgent, router, Gemini
+  helpers, CLI, and specialist agent graphs.
+- `init_db()` successfully applied the schema to the local PostgreSQL task store.
+- A threaded local PostgreSQL test started 8 turns for the same conversation and
+  received `[1, 2, 3, 4, 5, 6, 7, 8]` with no duplicates.
+- Router tests confirmed malformed Gemini routing JSON still falls back to keyword
+  routing, while missing `GEMINI_API_KEY` raises a clear runtime error.
+- HostGraph failure-path testing confirmed missing `GEMINI_API_KEY` returns a
+  failed task event with an actionable message instead of silently falling back.
+- Query rewrite tests confirmed follow-up questions with references are resolved,
+  while unrelated questions and questions with explicit invoice numbers are not
+  rewritten.

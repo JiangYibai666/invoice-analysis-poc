@@ -18,6 +18,7 @@ _MODELS = [
 ]
 
 _RETRYABLE_CODES = {404, 429, 500, 503}
+_AUTHORIZATION_CODES = {401, 403}
 DEFAULT_SUMMARY_PREVIEW_ROWS = 20
 MAX_SUMMARY_PREVIEW_ROWS = 200
 
@@ -43,6 +44,18 @@ def _is_retryable(exc: Exception) -> bool:
     return any(str(code) in msg for code in _RETRYABLE_CODES)
 
 
+def _friendly_api_error(exc: Exception) -> RuntimeError:
+    if isinstance(exc, genai_errors.APIError):
+        if exc.code in _AUTHORIZATION_CODES:
+            return RuntimeError(
+                "Gemini API access was denied. Check GEMINI_API_KEY, the Google "
+                "Cloud/AI Studio project attached to that key, API enablement, "
+                f"billing/quota status, and model access. Original error: {exc}"
+            )
+        return RuntimeError(f"Gemini API request failed with status {exc.code}: {exc}")
+    return RuntimeError(str(exc) or type(exc).__name__)
+
+
 def generate_content(client: genai.Client, prompt: str) -> str:
     last_exc: Exception | None = None
     for model in _MODELS:
@@ -60,7 +73,7 @@ def generate_content(client: genai.Client, prompt: str) -> str:
             if _is_retryable(exc):
                 last_exc = exc
                 continue
-            raise
+            raise _friendly_api_error(exc) from exc
     raise RuntimeError(f"All models unavailable. Last error: {last_exc}") from last_exc
 
 

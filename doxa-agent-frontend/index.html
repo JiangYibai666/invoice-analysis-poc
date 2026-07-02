@@ -168,11 +168,17 @@
       { label: "Purchase orders", q: "Show top 10 purchase orders by value" },
       { label: "Three-way match", q: "Check three-way matching for invoice INV-00000001" }
     ];
+    function newConversationId() {
+      if (window.crypto && crypto.randomUUID) return `conv_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+      return `conv_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    }
     const state = {
       mode: localStorage.getItem("doxa.mode") || runtimeConfig.defaultMode || "live",
       backendUrl: localStorage.getItem("doxa.backendUrl") || defaultBackendUrl(),
+      conversationId: sessionStorage.getItem("doxa.conversationId") || newConversationId(),
       seq: 1
     };
+    sessionStorage.setItem("doxa.conversationId", state.conversationId);
     const $ = (id) => document.getElementById(id);
     function esc(s) {
       return String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch]));
@@ -291,7 +297,12 @@
     }
     async function askBackend(id, q) {
       const base = state.backendUrl.replace(/\/+$/, "");
-      const payload = { source_agent: "CLI", target_agent: "HostAgent", message: { role: "user", parts: [{ type: "text", text: q }] } };
+      const payload = {
+        conversation_id: state.conversationId,
+        source_agent: "CLI",
+        target_agent: "HostAgent",
+        message: { role: "user", parts: [{ type: "text", text: q }] }
+      };
       try {
         const resp = await fetch(base + "/tasks/sendSubscribe", {
           method: "POST",
@@ -348,7 +359,14 @@
       if (state.mode === "live") askBackend(id, q);
       else renderDemo(id, q);
     }
-    $("newChat").addEventListener("click", () => { $("messages").innerHTML = ""; $("welcome").style.display = "flex"; $("thread").style.display = "none"; $("composer").style.display = "none"; });
+    $("newChat").addEventListener("click", () => {
+      state.conversationId = newConversationId();
+      sessionStorage.setItem("doxa.conversationId", state.conversationId);
+      $("messages").innerHTML = "";
+      $("welcome").style.display = "flex";
+      $("thread").style.display = "none";
+      $("composer").style.display = "none";
+    });
     $("settingsButton").addEventListener("click", () => $("settings").classList.toggle("open"));
     $("liveButton").addEventListener("click", () => { state.mode = "live"; syncSettings(); });
     $("demoButton").addEventListener("click", () => { state.mode = "demo"; syncSettings(); });

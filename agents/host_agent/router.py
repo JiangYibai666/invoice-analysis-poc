@@ -113,8 +113,8 @@ def route_query(query: str) -> RouteDecision:
         query=query,
     )
 
-    client = get_client()
     try:
+        client = get_client()
         payload = _extract_json(generate_content(client, prompt))
         return _normalize_route(payload)
     except (ValueError, KeyError):
