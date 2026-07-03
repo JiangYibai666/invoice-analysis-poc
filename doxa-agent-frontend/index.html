@@ -37,6 +37,21 @@
     .new-chat { display: flex; align-items: center; gap: 8px; width: 100%; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 9px 12px; color: var(--text); margin-bottom: 22px; }
     .new-chat:hover, .example-card:hover, .status-button:hover { border-color: var(--accent); }
     .section-label { color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; padding: 0 6px 9px; }
+    .history { min-height: 0; overflow: auto; padding-right: 2px; }
+    .history-head { display: flex; align-items: center; justify-content: space-between; padding: 0 6px 8px; }
+    .history-head .section-label { padding: 0; }
+    .icon-button { width: 24px; height: 24px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--muted); line-height: 1; }
+    .icon-button:hover { border-color: var(--accent); color: var(--accent); }
+    .history-list { display: flex; flex-direction: column; gap: 6px; }
+    .history-item { display: flex; align-items: stretch; gap: 4px; background: transparent; border: 1px solid transparent; border-radius: var(--radius); color: var(--text); }
+    .history-item:hover { background: rgba(255,255,255,.42); border-color: var(--border); }
+    .history-item.active { background: var(--surface); border-color: var(--accent-border); }
+    .history-open { min-width: 0; flex: 1; text-align: left; border: 0; background: transparent; padding: 8px 4px 8px 9px; color: inherit; }
+    .history-delete { width: 30px; flex: 0 0 auto; border: 0; background: transparent; color: var(--faint); border-radius: 6px; margin: 5px 5px 5px 0; font-size: 16px; line-height: 1; }
+    .history-delete:hover { background: var(--danger-bg); color: var(--danger-text); }
+    .history-title { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .history-meta { margin-top: 4px; color: var(--faint); font-size: 10.5px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .history-empty { color: var(--faint); font-size: 12px; line-height: 1.45; padding: 8px 6px; }
     .profile { border-top: 1px solid var(--border); padding-top: 13px; margin-top: auto; display: flex; align-items: center; gap: 9px; font-size: 13px; }
     .avatar { width: 26px; height: 26px; border-radius: 50%; background: var(--border-strong); }
     .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -111,6 +126,15 @@
         <div><div class="brand-title">Doxa</div><div class="brand-subtitle">Invoice Agent</div></div>
       </div>
       <button class="new-chat" id="newChat"><span style="color:var(--accent);font-size:16px;">+</span> New chat</button>
+      <div class="history">
+        <div class="history-head">
+          <div class="section-label">History</div>
+          <button class="icon-button" id="refreshHistory" title="Refresh history">↻</button>
+        </div>
+        <div class="history-list" id="historyList">
+          <div class="history-empty">No saved conversations yet.</div>
+        </div>
+      </div>
       <div class="profile"><div class="avatar"></div><div>Finance Ops</div><div class="pill" style="margin-left:auto;">Live UI</div></div>
     </aside>
     <main class="main">
@@ -176,6 +200,7 @@
       mode: localStorage.getItem("doxa.mode") || runtimeConfig.defaultMode || "live",
       backendUrl: localStorage.getItem("doxa.backendUrl") || defaultBackendUrl(),
       conversationId: sessionStorage.getItem("doxa.conversationId") || newConversationId(),
+      conversations: [],
       seq: 1
     };
     sessionStorage.setItem("doxa.conversationId", state.conversationId);
@@ -185,6 +210,21 @@
     }
     function displayAgent(name) {
       return ({ InvoiceAgent: "Invoice Agent", PurchaseOrderAgent: "PO Agent", DeliveryOrderAgent: "DO Agent", HostAgent: "Host Agent" })[name] || name;
+    }
+    function backendBase() {
+      return state.backendUrl.replace(/\/+$/, "");
+    }
+    function shortId(id) {
+      return String(id || "").replace(/^conv_/, "").slice(0, 12);
+    }
+    function titleForConversation(item) {
+      return item.last_user_query || item.title || `Conversation ${shortId(item.conversation_id)}`;
+    }
+    function formatHistoryTime(value) {
+      if (!value) return "";
+      const dt = new Date(value);
+      if (Number.isNaN(dt.getTime())) return "";
+      return dt.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
     function stripTables(text) {
       return (text || "").replace(/\n?(?:\|[^\n]+\|\n?)+/g, "\n").trim();
@@ -231,6 +271,46 @@
       $("cardExamples").innerHTML = examples.map(ex => `<button class="example-card" data-q="${esc(ex.q)}"><strong>${esc(ex.label)}</strong><span>${esc(ex.q)}</span></button>`).join("");
       document.querySelectorAll("[data-q]").forEach(btn => btn.addEventListener("click", () => ask(btn.dataset.q)));
     }
+    function renderHistory() {
+      const list = $("historyList");
+      if (!state.conversations.length) {
+        list.innerHTML = `<div class="history-empty">No saved conversations yet.</div>`;
+        return;
+      }
+      list.innerHTML = state.conversations.map(item => {
+        const active = item.conversation_id === state.conversationId ? " active" : "";
+        const title = titleForConversation(item);
+        const meta = `${item.turn_count || 0} turn${item.turn_count === 1 ? "" : "s"} · ${formatHistoryTime(item.updated_at)}`;
+        return `<div class="history-item${active}">
+          <button class="history-open" data-conversation="${esc(item.conversation_id)}">
+            <div class="history-title">${esc(title)}</div>
+            <div class="history-meta">${esc(meta)}</div>
+          </button>
+          <button class="history-delete" data-delete-conversation="${esc(item.conversation_id)}" title="Delete conversation">×</button>
+        </div>`;
+      }).join("");
+      document.querySelectorAll("[data-conversation]").forEach(btn => btn.addEventListener("click", () => loadConversation(btn.dataset.conversation)));
+      document.querySelectorAll("[data-delete-conversation]").forEach(btn => btn.addEventListener("click", () => deleteConversation(btn.dataset.deleteConversation)));
+    }
+    async function refreshConversations(options = {}) {
+      if (state.mode !== "live") {
+        state.conversations = [];
+        renderHistory();
+        return;
+      }
+      try {
+        const resp = await fetch(`${backendBase()}/conversations?limit=40`, { headers: { "Accept": "application/json" } });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        state.conversations = data.conversations || [];
+        renderHistory();
+        if (options.loadCurrent && state.conversations.some(c => c.conversation_id === state.conversationId)) {
+          await loadConversation(state.conversationId, { skipRefresh: true });
+        }
+      } catch (err) {
+        $("historyList").innerHTML = `<div class="history-empty">History unavailable.</div>`;
+      }
+    }
     function syncSettings() {
       $("backendUrl").value = state.backendUrl;
       $("statusLabel").textContent = state.mode === "live" ? "Live" : "Demo";
@@ -247,6 +327,7 @@
     function addUser(text) {
       const id = `m${state.seq++}`;
       $("messages").insertAdjacentHTML("beforeend", `<div class="msg" id="${id}"><div class="user"><div class="bubble">${esc(text)}</div></div></div>`);
+      return id;
     }
     function addAssistant() {
       const id = `m${state.seq++}`;
@@ -284,6 +365,77 @@
         btn.firstChild.nodeValue = (open ? "+ " : "- ") + btn.firstChild.nodeValue.slice(2);
       }));
     }
+    function renderConversationTurns(turns) {
+      $("messages").innerHTML = "";
+      state.seq = 1;
+      if (!turns.length) {
+        $("welcome").style.display = "flex";
+        $("thread").style.display = "none";
+        $("composer").style.display = "none";
+        return;
+      }
+      showConversation();
+      turns.forEach(turn => {
+        addUser(turn.user_query || "");
+        const id = addAssistant();
+        if (turn.status === "completed" && turn.final_report) {
+          renderFinal(id, reportToMessage(turn.final_report));
+        } else if (turn.status === "failed") {
+          renderFinal(id, { routed: [], text: "", sqls: [], tables: [], summary: "", error: turn.error_message || "This request failed." });
+        } else {
+          renderFinal(id, { routed: [], text: turn.assistant_summary || "This request has not completed.", sqls: [], tables: [], summary: "", error: "" });
+        }
+      });
+      $("thread").scrollTop = $("thread").scrollHeight;
+    }
+    async function loadConversation(conversationId, options = {}) {
+      if (!conversationId || state.mode !== "live") return;
+      state.conversationId = conversationId;
+      sessionStorage.setItem("doxa.conversationId", state.conversationId);
+      renderHistory();
+      try {
+        const resp = await fetch(`${backendBase()}/conversations/${encodeURIComponent(conversationId)}/turns?limit=80`, { headers: { "Accept": "application/json" } });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        renderConversationTurns(data.turns || []);
+        if (!options.skipRefresh) refreshConversations();
+      } catch (err) {
+        showConversation();
+        $("messages").innerHTML = "";
+        addUser(`Load conversation ${conversationId}`);
+        const id = addAssistant();
+        renderFinal(id, { routed: [], text: "", sqls: [], tables: [], summary: "", error: `Could not load conversation history. ${(err && err.message) || err}` });
+      }
+    }
+    function resetConversationUi() {
+      state.conversationId = newConversationId();
+      sessionStorage.setItem("doxa.conversationId", state.conversationId);
+      $("messages").innerHTML = "";
+      $("welcome").style.display = "flex";
+      $("thread").style.display = "none";
+      $("composer").style.display = "none";
+    }
+    async function deleteConversation(conversationId) {
+      if (!conversationId || state.mode !== "live") return;
+      const item = state.conversations.find(c => c.conversation_id === conversationId);
+      const title = item ? titleForConversation(item) : conversationId;
+      if (!window.confirm(`Delete this conversation?\n\n${title}`)) return;
+      try {
+        const resp = await fetch(`${backendBase()}/conversations/${encodeURIComponent(conversationId)}`, {
+          method: "DELETE",
+          headers: { "Accept": "application/json" }
+        });
+        if (!resp.ok && resp.status !== 404) throw new Error(`HTTP ${resp.status}`);
+        if (conversationId === state.conversationId) resetConversationUi();
+        await refreshConversations();
+      } catch (err) {
+        showConversation();
+        $("messages").innerHTML = "";
+        addUser(`Delete conversation ${conversationId}`);
+        const id = addAssistant();
+        renderFinal(id, { routed: [], text: "", sqls: [], tables: [], summary: "", error: `Could not delete conversation. ${(err && err.message) || err}` });
+      }
+    }
     function renderDemo(id, q) {
       setTimeout(() => setAssistant(id, `${routingHtml([{ name: "Invoice Agent" }])}<div class="work"><span><span class="blink"></span> <span class="blink"></span> <span class="blink"></span></span><span>Querying demo data...</span></div>`), 350);
       setTimeout(() => renderFinal(id, {
@@ -296,7 +448,7 @@
       }), 900);
     }
     async function askBackend(id, q) {
-      const base = state.backendUrl.replace(/\/+$/, "");
+      const base = backendBase();
       const payload = {
         conversation_id: state.conversationId,
         source_agent: "CLI",
@@ -345,6 +497,7 @@
         let data = {};
         (ev.artifact.parts || []).forEach(p => { if (p && p.type === "data") data = p.data; });
         renderFinal(id, reportToMessage(data));
+        refreshConversations();
       }
     }
     function ask(q) {
@@ -360,27 +513,26 @@
       else renderDemo(id, q);
     }
     $("newChat").addEventListener("click", () => {
-      state.conversationId = newConversationId();
-      sessionStorage.setItem("doxa.conversationId", state.conversationId);
-      $("messages").innerHTML = "";
-      $("welcome").style.display = "flex";
-      $("thread").style.display = "none";
-      $("composer").style.display = "none";
+      resetConversationUi();
+      renderHistory();
     });
+    $("refreshHistory").addEventListener("click", () => refreshConversations());
     $("settingsButton").addEventListener("click", () => $("settings").classList.toggle("open"));
-    $("liveButton").addEventListener("click", () => { state.mode = "live"; syncSettings(); });
-    $("demoButton").addEventListener("click", () => { state.mode = "demo"; syncSettings(); });
+    $("liveButton").addEventListener("click", () => { state.mode = "live"; syncSettings(); refreshConversations(); });
+    $("demoButton").addEventListener("click", () => { state.mode = "demo"; syncSettings(); refreshConversations(); });
     $("saveSettings").addEventListener("click", () => {
       state.backendUrl = ($("backendUrl").value || defaultBackendUrl()).trim().replace(/\/+$/, "");
       localStorage.setItem("doxa.mode", state.mode);
       localStorage.setItem("doxa.backendUrl", state.backendUrl);
       $("settings").classList.remove("open");
       syncSettings();
+      refreshConversations();
     });
     document.querySelectorAll("[data-send]").forEach(btn => btn.addEventListener("click", () => ask($(btn.dataset.send).value)));
     ["welcomeInput", "replyInput"].forEach(id => $(id).addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(e.target.value); } }));
     renderExamples();
     syncSettings();
+    refreshConversations({ loadCurrent: true });
   </script>
 </body>
 </html>

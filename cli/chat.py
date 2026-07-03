@@ -11,6 +11,7 @@ from rich.table import Table
 
 from a2a.client import A2AClient
 from a2a.types import Message, TaskRequest, TaskState, TextPart
+from storage.memory_store import load_conversation_debug_turns
 
 console = Console()
 
@@ -119,6 +120,8 @@ Available queries by category (natural language):
   • "What is the status of DOGLOBAL000XXXXX and its linked PO?"
   • "Does INV000XXXXX have a delivery order? Show me the DO details"
 
+Type 'memory' to inspect the current conversation memory.
+Type 'memory <conversation_id>' to inspect another conversation.
 Type 'help' to show this message, 'exit' to quit.
 """.strip()
 
@@ -248,6 +251,41 @@ def _display_routing(message: str) -> None:
     console.print(f"[dim]→ Routing to:[/dim] {agent_labels}")
 
 
+def _display_memory_debug(conversation_id: str) -> None:
+    try:
+        turns = load_conversation_debug_turns(conversation_id)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]Could not load memory for {conversation_id}: {exc}[/red]")
+        return
+
+    if not turns:
+        console.print(f"[yellow]No conversation turns found for {conversation_id}.[/yellow]")
+        return
+
+    tbl = Table(title=f"Conversation Memory — {conversation_id}", show_lines=True)
+    tbl.add_column("Turn", justify="right")
+    tbl.add_column("Status")
+    tbl.add_column("Used Memory")
+    tbl.add_column("User Query")
+    tbl.add_column("Memory Query")
+    tbl.add_column("Summary / Error")
+
+    for turn in turns:
+        memory_query = turn.get("memory_query") or ""
+        user_query = turn.get("user_query") or ""
+        used_memory = "yes" if memory_query and memory_query != user_query else "no"
+        summary_or_error = turn.get("assistant_summary") or turn.get("error_message") or ""
+        tbl.add_row(
+            str(turn["turn_index"]),
+            turn["status"],
+            used_memory,
+            user_query,
+            memory_query,
+            summary_or_error,
+        )
+    console.print(tbl)
+
+
 async def ask_once(query: str, conversation_id: str) -> None:
     import httpx as _httpx
     request = TaskRequest(
@@ -282,7 +320,10 @@ async def ask_once(query: str, conversation_id: str) -> None:
 
 def run_cli() -> None:
     conversation_id = f"conv_{uuid4().hex[:12]}"
-    console.print(Panel.fit("Invoice Analysis CLI  (type 'help' or 'exit')", title="invoice-analysis-poc"))
+    console.print(Panel.fit(
+        f"Invoice Analysis CLI  (type 'help' or 'exit')\nConversation: {conversation_id}",
+        title="invoice-analysis-poc",
+    ))
     while True:
         try:
             query = input("> ").strip()
@@ -294,5 +335,10 @@ def run_cli() -> None:
             break
         if query.lower() == "help":
             console.print(_HELP)
+            continue
+        if query.lower() == "memory" or query.lower().startswith("memory "):
+            parts = query.split(maxsplit=1)
+            target_conversation_id = parts[1].strip() if len(parts) == 2 else conversation_id
+            _display_memory_debug(target_conversation_id)
             continue
         asyncio.run(ask_once(query, conversation_id))

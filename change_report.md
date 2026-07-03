@@ -132,3 +132,112 @@ Google project billing/quota, API enablement, and model access are fixed.
 - Environment verification confirmed that even with a bad shell-level
   `GEMINI_API_KEY`, Gemini routing uses the current `.env` key when
   `DOXA_DOTENV_OVERRIDE=1`.
+
+---
+
+Date: 2026-07-03
+
+## Conversation Memory Hardening and Frontend History
+
+### Summary
+
+Extended the recent-turn memory MVP into a user-visible conversation history
+feature. The task store now records turn lifecycle status, failed turns are
+auditable, HostAgent avoids over-broad follow-up rewrites, and the browser
+frontend can list, open, and delete saved conversations from the left History
+panel.
+
+### Files changed
+
+- `agents/host_agent/graph.py`
+- `agents/host_agent/server.py`
+- `cli/chat.py`
+- `doxa-agent-frontend/index.html`
+- `README.md`
+- `storage/schema.sql`
+- `storage/memory_store.py`
+- `change_report.md`
+
+### Key changes
+
+1. Hardened conversation turn persistence:
+   - Added `status`, `error_message`, `completed_at`, and `updated_at` to
+     `invoice_poc_conversation_turns`.
+   - Backfilled existing turns with `final_report IS NOT NULL` to
+     `status='completed'`.
+   - Memory context now only reads completed turns with a saved final report.
+   - Failed HostAgent requests are saved as `status='failed'` with the error
+     message when a turn has already been reserved.
+2. Improved follow-up query rewriting:
+   - HostAgent now selects only the relevant recent entity for a follow-up
+     question instead of appending every recent invoice/PO/DO reference.
+   - PO-specific follow-ups such as `What about its PO?` resolve only the recent
+     PO.
+   - Generic collection queries such as `Which POs are linked to invoices?` are
+     not rewritten just because they contain `linked` or `related`.
+   - Final reports include `latest_refs` and `selected_refs` in memory metadata
+     for debugging.
+3. Added memory inspection helpers:
+   - `load_conversation_debug_turns()` returns stored turns with lifecycle
+     status, original query, rewritten query, summary/error, and final report.
+   - CLI now supports `memory` and `memory <conversation_id>` to inspect stored
+     conversation turns from the terminal.
+4. Added HostAgent history APIs:
+   - `GET /conversations` returns recent saved conversations for the History
+     sidebar.
+   - `GET /conversations/{conversation_id}/turns` returns turns for a selected
+     conversation.
+   - `DELETE /conversations/{conversation_id}` deletes a conversation from the
+     task-store memory tables.
+   - CORS now allows `GET` and `DELETE` in addition to the existing streaming
+     `POST` endpoints.
+5. Added browser frontend History sidebar:
+   - The left sidebar lists recent saved conversations.
+   - The active conversation is highlighted.
+   - Clicking a history item loads the saved user/assistant turns into the chat
+     transcript.
+   - Refreshing the page restores the current conversation when it still exists.
+   - Completing a new request refreshes the History list.
+   - Each history item has a delete button with a confirmation prompt.
+   - Deleting the active conversation resets the UI to a new empty conversation.
+6. Updated documentation:
+   - README now documents memory lifecycle status, frontend History, CLI memory
+     inspection, and deleting a saved conversation from the History panel.
+
+### Behavior
+
+Example:
+
+1. User asks a business question in the browser.
+2. The turn is stored under the current `conversation_id`.
+3. The left History panel refreshes and shows the conversation title, turn count,
+   and updated time.
+4. User can click the history item later to reload its stored transcript.
+5. User can click the `×` button on the history item, confirm deletion, and remove
+   that conversation from the memory tables.
+
+Deleting a conversation removes memory records from `invoice_poc_conversation_turns`
+and `invoice_poc_conversations`. It does not delete invoice, purchase order, or
+delivery order source data.
+
+### Verification
+
+- Python compilation passed for `storage/memory_store.py`,
+  `agents/host_agent/graph.py`, `agents/host_agent/server.py`, and `cli/chat.py`.
+- `init_db()` successfully applied the new memory lifecycle schema to the local
+  PostgreSQL task store.
+- HostAgent route registration confirmed:
+  - `GET /conversations`
+  - `GET /conversations/{conversation_id}/turns`
+  - `DELETE /conversations/{conversation_id}`
+  - `POST /tasks/send`
+  - `POST /tasks/sendSubscribe`
+- Local PostgreSQL verification confirmed `list_conversations(3)` returns saved
+  conversations with `conversation_id`, title/query, turn count, status, and
+  timestamps.
+- Frontend inline JavaScript syntax validation passed using Node `vm.Script`.
+- Query rewrite checks confirmed:
+  - `What about its PO?` resolves only to the latest PO.
+  - `What is its status?` resolves to the latest primary entity.
+  - `Which POs are linked to invoices?` is not rewritten from memory.
+  - `Show top 10 purchase orders by value` is not rewritten.

@@ -13,6 +13,7 @@ from agents.host_agent.router import RouteDecision, route_query
 from storage.memory_store import (
     ConversationTurn,
     build_memory_context,
+    fail_conversation_turn,
     save_conversation_turn,
     start_conversation_turn,
 )
@@ -27,11 +28,20 @@ from tools.document_match_query import (
 )
 
 
-_REFERENCE_CUE_RE = re.compile(
-    r"\b(it|its|that|this|previous|last|same|related|linked|above|those|them)\b"
-    r"|它|其|这个|那个|这些|那些|上一个|上一|刚才|之前|相关|关联",
+_DIRECT_REFERENCE_CUE_RE = re.compile(
+    r"\b(it|its|that|this|previous|last|same|above|those|them)\b"
+    r"|它|其|这个|那个|这些|那些|上一个|上一|刚才|之前",
     re.IGNORECASE,
 )
+_RELATION_REFERENCE_CUE_RE = re.compile(r"\b(related|linked)\b|相关|关联", re.IGNORECASE)
+_GENERIC_COLLECTION_QUERY_RE = re.compile(
+    r"\b(which|show|list|display|count|top|all|how\s+many)\b.*"
+    r"\b(invoices|pos|purchase\s+orders|dos|delivery\s+orders)\b",
+    re.IGNORECASE,
+)
+_PO_CUE_RE = re.compile(r"\b(po|purchase\s+order)s?\b|采购订单", re.IGNORECASE)
+_DO_CUE_RE = re.compile(r"\b(do|delivery\s+order)s?\b|送货单|交货单", re.IGNORECASE)
+_INVOICE_CUE_RE = re.compile(r"\binvoices?\b|发票", re.IGNORECASE)
 
 
 def _extract_data(artifact: Optional[Artifact]) -> dict:
@@ -71,6 +81,61 @@ def _latest_entity_refs(turns: list[ConversationTurn]) -> dict[str, str]:
     return refs
 
 
+def _latest_primary_ref(turns: list[ConversationTurn]) -> tuple[str, str] | None:
+    """Return the most likely entity for a generic follow-up like "what is its status?"."""
+    for turn in reversed(turns):
+        text = " ".join(
+            part for part in (
+                turn.get("user_query"),
+                turn.get("memory_query"),
+                turn.get("assistant_summary"),
+            )
+            if part
+        )
+        matches: list[tuple[int, str, str]] = []
+        for kind, extractor in (
+            ("po", extract_po_no),
+            ("do", extract_do_no),
+            ("invoice", extract_invoice_no),
+        ):
+            ref = extractor(text)
+            if not ref:
+                continue
+            pos = text.find(ref)
+            matches.append((pos if pos >= 0 else len(text), kind, ref))
+        if matches:
+            _, kind, ref = min(matches, key=lambda item: item[0])
+            return kind, ref
+    return None
+
+
+def _select_memory_refs(query: str, turns: list[ConversationTurn], refs: dict[str, str]) -> dict[str, str]:
+    selected: dict[str, str] = {}
+    if _INVOICE_CUE_RE.search(query) and refs.get("invoice"):
+        selected["invoice"] = refs["invoice"]
+    if _PO_CUE_RE.search(query) and refs.get("po"):
+        selected["po"] = refs["po"]
+    if _DO_CUE_RE.search(query) and refs.get("do"):
+        selected["do"] = refs["do"]
+
+    if selected:
+        return selected
+
+    primary_ref = _latest_primary_ref(turns)
+    if primary_ref is None:
+        return {}
+    kind, ref = primary_ref
+    return {kind: ref}
+
+
+def _has_memory_reference_cue(query: str) -> bool:
+    if _DIRECT_REFERENCE_CUE_RE.search(query):
+        return True
+    if _RELATION_REFERENCE_CUE_RE.search(query) and not _GENERIC_COLLECTION_QUERY_RE.search(query):
+        return True
+    return False
+
+
 def _rewrite_query_with_memory(query: str, turns: list[ConversationTurn]) -> tuple[str, dict]:
     """Resolve short follow-up references without appending full history to the query."""
     refs = _latest_entity_refs(turns)
@@ -82,21 +147,30 @@ def _rewrite_query_with_memory(query: str, turns: list[ConversationTurn]) -> tup
     }
 
     has_current_ref = bool(extract_po_no(query) or extract_do_no(query) or extract_invoice_no(query))
-    if not turns or not refs or has_current_ref or not _REFERENCE_CUE_RE.search(query):
+    if not turns or not refs or has_current_ref or not _has_memory_reference_cue(query):
         memory_payload["rewritten"] = False
         memory_payload["rewritten_query"] = query
+        memory_payload["selected_refs"] = {}
+        return query, memory_payload
+
+    selected_refs = _select_memory_refs(query, turns, refs)
+    if not selected_refs:
+        memory_payload["rewritten"] = False
+        memory_payload["rewritten_query"] = query
+        memory_payload["selected_refs"] = {}
         return query, memory_payload
 
     labels = []
-    if refs.get("invoice"):
-        labels.append(f"invoice {refs['invoice']}")
-    if refs.get("po"):
-        labels.append(f"purchase order {refs['po']}")
-    if refs.get("do"):
-        labels.append(f"delivery order {refs['do']}")
+    if selected_refs.get("invoice"):
+        labels.append(f"invoice {selected_refs['invoice']}")
+    if selected_refs.get("po"):
+        labels.append(f"purchase order {selected_refs['po']}")
+    if selected_refs.get("do"):
+        labels.append(f"delivery order {selected_refs['do']}")
     rewritten_query = f"{query} Referring to the recent conversation's {', '.join(labels)}."
     memory_payload["rewritten"] = True
     memory_payload["rewritten_query"] = rewritten_query
+    memory_payload["selected_refs"] = selected_refs
     return rewritten_query, memory_payload
 
 
@@ -108,6 +182,24 @@ def _build_summary(data: dict) -> str:
         return _synthesize_multi_agent_summary(data)
 
     return data.get("summary", "No summary available.")
+
+
+def _memory_report_metadata(
+    conversation_id: str,
+    turn_index: int,
+    recent_turn_count: int,
+    rewritten_query: str,
+    memory_payload: dict,
+) -> dict:
+    return {
+        "conversation_id": conversation_id,
+        "turn_index": turn_index,
+        "used_recent_turns": recent_turn_count,
+        "rewritten_query": rewritten_query,
+        "rewritten": memory_payload.get("rewritten", False),
+        "latest_refs": memory_payload.get("latest_refs", {}),
+        "selected_refs": memory_payload.get("selected_refs", {}),
+    }
 
 
 _OFF_TOPIC_RESPONSE = (
@@ -389,13 +481,13 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
                 "raw_data": {
                     "query_type": "off_topic",
                     "route": route,
-                    "memory": {
-                        "conversation_id": conversation_id,
-                        "turn_index": turn_index,
-                        "used_recent_turns": len(recent_turns),
-                        "rewritten_query": rewritten_query,
-                        "rewritten": memory_payload.get("rewritten", False),
-                    },
+                    "memory": _memory_report_metadata(
+                        conversation_id,
+                        turn_index,
+                        len(recent_turns),
+                        rewritten_query,
+                        memory_payload,
+                    ),
                 },
             }
             finalize_session(task_request.session_id, report)
@@ -442,13 +534,13 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
             "summary": summary,
             "raw_data": {
                 **invoice_data,
-                "memory": {
-                    "conversation_id": conversation_id,
-                    "turn_index": turn_index,
-                    "used_recent_turns": len(recent_turns),
-                    "rewritten_query": rewritten_query,
-                    "rewritten": memory_payload.get("rewritten", False),
-                },
+                "memory": _memory_report_metadata(
+                    conversation_id,
+                    turn_index,
+                    len(recent_turns),
+                    rewritten_query,
+                    memory_payload,
+                ),
             },
         }
 
@@ -477,6 +569,17 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
 
     except Exception as exc:
         err_msg = str(exc) or type(exc).__name__
+        try:
+            fail_conversation_turn(
+                conversation_id,
+                task_request.session_id,
+                turn_index,
+                query,
+                rewritten_query,
+                err_msg,
+            )
+        except Exception:
+            pass
         yield TaskEvent(
             task_id=task_request.task_id,
             state=TaskState.FAILED,

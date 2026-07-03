@@ -20,6 +20,26 @@ class ConversationTurn(TypedDict):
     assistant_summary: str | None
 
 
+class ConversationDebugTurn(ConversationTurn):
+    session_id: str
+    status: str
+    error_message: str | None
+    final_report: dict[str, Any] | None
+    created_at: str
+    completed_at: str | None
+    updated_at: str
+
+
+class ConversationListItem(TypedDict):
+    conversation_id: str
+    title: str | None
+    turn_count: int
+    last_status: str | None
+    last_user_query: str | None
+    created_at: str
+    updated_at: str
+
+
 def _memory_turn_limit() -> int:
     raw = os.getenv("DOXA_MEMORY_TURN_LIMIT")
     if not raw:
@@ -87,6 +107,7 @@ def _fetch_recent_turns(
         SELECT turn_index, user_query, memory_query, assistant_summary
         FROM invoice_poc_conversation_turns
         WHERE conversation_id = %s
+          AND status = 'completed'
           AND final_report IS NOT NULL
           {before_clause}
         ORDER BY turn_index DESC
@@ -160,8 +181,8 @@ def start_conversation_turn(
             cur.execute(
                 """
                 INSERT INTO invoice_poc_conversation_turns
-                    (conversation_id, session_id, turn_index, user_query)
-                VALUES (%s, %s, %s, %s)
+                    (conversation_id, session_id, turn_index, user_query, status)
+                VALUES (%s, %s, %s, %s, 'started')
                 """,
                 (conversation_id, session_id, turn_index, user_query),
             )
@@ -222,15 +243,26 @@ def save_conversation_turn(
                         user_query,
                         memory_query,
                         assistant_summary,
-                        final_report
+                        final_report,
+                        status,
+                        error_message,
+                        completed_at,
+                        updated_at
                     )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'completed', NULL, NOW(), NOW())
                 ON CONFLICT (conversation_id, turn_index) DO UPDATE
                     SET session_id = EXCLUDED.session_id,
                         user_query = EXCLUDED.user_query,
                         memory_query = EXCLUDED.memory_query,
                         assistant_summary = EXCLUDED.assistant_summary,
-                        final_report = EXCLUDED.final_report
+                        final_report = EXCLUDED.final_report,
+                        status = 'completed',
+                        error_message = NULL,
+                        completed_at = COALESCE(
+                            invoice_poc_conversation_turns.completed_at,
+                            EXCLUDED.completed_at
+                        ),
+                        updated_at = NOW()
                 """,
                 (
                     conversation_id,
@@ -251,5 +283,205 @@ def save_conversation_turn(
                 (conversation_id,),
             )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def fail_conversation_turn(
+    conversation_id: str,
+    session_id: str,
+    turn_index: int,
+    user_query: str,
+    memory_query: str,
+    error_message: str,
+) -> None:
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO invoice_poc_conversation_turns
+                    (
+                        conversation_id,
+                        session_id,
+                        turn_index,
+                        user_query,
+                        memory_query,
+                        status,
+                        error_message,
+                        completed_at,
+                        updated_at
+                    )
+                VALUES (%s, %s, %s, %s, %s, 'failed', %s, NOW(), NOW())
+                ON CONFLICT (conversation_id, turn_index) DO UPDATE
+                    SET session_id = EXCLUDED.session_id,
+                        user_query = EXCLUDED.user_query,
+                        memory_query = EXCLUDED.memory_query,
+                        status = 'failed',
+                        error_message = EXCLUDED.error_message,
+                        completed_at = COALESCE(
+                            invoice_poc_conversation_turns.completed_at,
+                            EXCLUDED.completed_at
+                        ),
+                        updated_at = NOW()
+                """,
+                (
+                    conversation_id,
+                    session_id,
+                    turn_index,
+                    user_query,
+                    memory_query,
+                    _truncate(error_message, 2000),
+                ),
+            )
+            cur.execute(
+                """
+                UPDATE invoice_poc_conversations
+                SET updated_at = NOW()
+                WHERE conversation_id = %s
+                """,
+                (conversation_id,),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_conversation_debug_turns(
+    conversation_id: str,
+    limit: int = 20,
+) -> list[ConversationDebugTurn]:
+    turn_limit = max(1, min(100, limit))
+    conn = _connect()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT
+                    turn_index,
+                    session_id,
+                    user_query,
+                    memory_query,
+                    assistant_summary,
+                    final_report,
+                    status,
+                    error_message,
+                    created_at,
+                    completed_at,
+                    updated_at
+                FROM invoice_poc_conversation_turns
+                WHERE conversation_id = %s
+                ORDER BY turn_index DESC
+                LIMIT %s
+                """,
+                (conversation_id, turn_limit),
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    turns: list[ConversationDebugTurn] = []
+    for row in reversed(rows):
+        turns.append(
+            {
+                "turn_index": int(row["turn_index"]),
+                "session_id": row["session_id"],
+                "user_query": row["user_query"],
+                "memory_query": row["memory_query"],
+                "assistant_summary": row["assistant_summary"],
+                "final_report": row["final_report"],
+                "status": row["status"],
+                "error_message": row["error_message"],
+                "created_at": row["created_at"].isoformat(),
+                "completed_at": row["completed_at"].isoformat() if row["completed_at"] else None,
+                "updated_at": row["updated_at"].isoformat(),
+            }
+        )
+    return turns
+
+
+def list_conversations(limit: int = 30) -> list[ConversationListItem]:
+    conversation_limit = max(1, min(100, limit))
+    conn = _connect()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                WITH ranked_turns AS (
+                    SELECT
+                        conversation_id,
+                        user_query,
+                        status,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY conversation_id
+                            ORDER BY turn_index DESC
+                        ) AS rn
+                    FROM invoice_poc_conversation_turns
+                ),
+                turn_counts AS (
+                    SELECT conversation_id, COUNT(*) AS turn_count
+                    FROM invoice_poc_conversation_turns
+                    GROUP BY conversation_id
+                )
+                SELECT
+                    c.conversation_id,
+                    c.title,
+                    COALESCE(tc.turn_count, 0) AS turn_count,
+                    rt.status AS last_status,
+                    rt.user_query AS last_user_query,
+                    c.created_at,
+                    c.updated_at
+                FROM invoice_poc_conversations c
+                LEFT JOIN turn_counts tc ON tc.conversation_id = c.conversation_id
+                LEFT JOIN ranked_turns rt
+                    ON rt.conversation_id = c.conversation_id
+                   AND rt.rn = 1
+                ORDER BY c.updated_at DESC
+                LIMIT %s
+                """,
+                (conversation_limit,),
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    return [
+        {
+            "conversation_id": row["conversation_id"],
+            "title": row["title"],
+            "turn_count": int(row["turn_count"]),
+            "last_status": row["last_status"],
+            "last_user_query": row["last_user_query"],
+            "created_at": row["created_at"].isoformat(),
+            "updated_at": row["updated_at"].isoformat(),
+        }
+        for row in rows
+    ]
+
+
+def delete_conversation(conversation_id: str) -> bool:
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM invoice_poc_conversation_turns
+                WHERE conversation_id = %s
+                """,
+                (conversation_id,),
+            )
+            cur.execute(
+                """
+                DELETE FROM invoice_poc_conversations
+                WHERE conversation_id = %s
+                """,
+                (conversation_id,),
+            )
+            deleted = cur.rowcount > 0
+        conn.commit()
+        return deleted
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()

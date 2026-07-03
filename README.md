@@ -259,7 +259,17 @@ PO/DO analytics and matching reads PO/DO reference data from
 The task/session store creates its own `invoice_poc_*` tables in the
 `TASK_DB_NAME` database and does not write to the invoice or purchase data
 databases. Recent-turn conversation memory is stored in the task database and
-is bounded by `DOXA_MEMORY_TURN_LIMIT` (`6` turns by default).
+is bounded by `DOXA_MEMORY_TURN_LIMIT` (`6` turns by default, capped at `20`).
+Each turn is stored with a lifecycle status (`started`, `completed`, or
+`failed`) so completed answers can be used for short follow-up memory while
+failed requests remain available for audit/debugging.
+
+In the CLI, type `memory` to inspect the current conversation's stored turns, or
+`memory <conversation_id>` to inspect another conversation. The debug view shows
+the original user query, rewritten memory query, status, and whether memory was
+used. The browser frontend shows saved conversations in the left History panel;
+use the delete button on a history item to remove that conversation from the
+task-store memory tables.
 
 ## Safety Model
 

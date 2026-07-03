@@ -3,12 +3,13 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from a2a.server import create_a2a_router
 from a2a.types import TaskEvent, TaskRequest, TaskState
 from agents.host_agent.graph import run_host_graph
+from storage.memory_store import delete_conversation, list_conversations, load_conversation_debug_turns
 from storage.task_store import add_artifact, add_message, create_task, update_task_state
 
 
@@ -39,9 +40,27 @@ def create_app() -> FastAPI:
     _app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
-        allow_methods=["POST", "OPTIONS"],
+        allow_methods=["DELETE", "GET", "POST", "OPTIONS"],
         allow_headers=["content-type", "accept"],
     )
+
+    @_app.get("/conversations")
+    async def conversations(limit: int = 30) -> dict:
+        return {"conversations": list_conversations(limit)}
+
+    @_app.get("/conversations/{conversation_id}/turns")
+    async def conversation_turns(conversation_id: str, limit: int = 50) -> dict:
+        return {
+            "conversation_id": conversation_id,
+            "turns": load_conversation_debug_turns(conversation_id, limit),
+        }
+
+    @_app.delete("/conversations/{conversation_id}")
+    async def remove_conversation(conversation_id: str) -> dict:
+        if not delete_conversation(conversation_id):
+            raise HTTPException(status_code=404, detail="conversation not found")
+        return {"conversation_id": conversation_id, "deleted": True}
+
     _app.include_router(create_a2a_router(stream_handler))
     return _app
 

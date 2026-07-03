@@ -84,11 +84,42 @@ CREATE TABLE IF NOT EXISTS invoice_poc_conversation_turns (
     memory_query TEXT,
     assistant_summary TEXT,
     final_report JSONB,
+    status VARCHAR(20) NOT NULL DEFAULT 'started',
+    error_message TEXT,
+    completed_at TIMESTAMP
+    WITH
+        TIME ZONE,
+    updated_at TIMESTAMP
+    WITH
+        TIME ZONE NOT NULL DEFAULT NOW(),
     created_at TIMESTAMP
     WITH
         TIME ZONE NOT NULL DEFAULT NOW(),
         UNIQUE (conversation_id, turn_index)
 );
+
+ALTER TABLE invoice_poc_conversation_turns
+ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'started';
+
+ALTER TABLE invoice_poc_conversation_turns
+ADD COLUMN IF NOT EXISTS error_message TEXT;
+
+ALTER TABLE invoice_poc_conversation_turns
+ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP
+WITH
+    TIME ZONE;
+
+ALTER TABLE invoice_poc_conversation_turns
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP
+WITH
+    TIME ZONE NOT NULL DEFAULT NOW();
+
+UPDATE invoice_poc_conversation_turns
+SET status = 'completed',
+    completed_at = COALESCE(completed_at, created_at),
+    updated_at = NOW()
+WHERE final_report IS NOT NULL
+  AND status = 'started';
 
 CREATE INDEX IF NOT EXISTS idx_inv_turns_conversation
     ON invoice_poc_conversation_turns (conversation_id, turn_index);
