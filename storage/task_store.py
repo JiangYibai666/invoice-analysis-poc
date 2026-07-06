@@ -7,6 +7,7 @@ from typing import Any
 
 import psycopg2
 from dotenv import load_dotenv
+from psycopg2 import errors
 from psycopg2.extras import RealDictCursor
 
 from a2a.types import Artifact, Message, TaskState
@@ -14,6 +15,7 @@ from a2a.types import Artifact, Message, TaskState
 load_dotenv()
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+EMBEDDING_DIMENSIONS = 768
 
 
 def _dotenv_override() -> bool:
@@ -40,6 +42,29 @@ def _connect() -> psycopg2.extensions.connection:
     return conn
 
 
+def _try_enable_pgvector(cur: Any) -> bool:
+    try:
+        cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        cur.execute(
+            """
+            ALTER TABLE invoice_poc_long_term_memories
+            ADD COLUMN IF NOT EXISTS embedding_vector vector(768)
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_inv_ltm_embedding_vector
+            ON invoice_poc_long_term_memories
+            USING ivfflat (embedding_vector vector_cosine_ops)
+            WITH (lists = 100)
+            """
+        )
+        return True
+    except (errors.UndefinedFile, errors.UndefinedObject, errors.FeatureNotSupported):
+        cur.connection.rollback()
+        return False
+
+
 def init_db() -> None:
     """Create task-store tables if they do not exist."""
     sql = SCHEMA_PATH.read_text(encoding="utf-8")
@@ -50,6 +75,9 @@ def init_db() -> None:
                 stmt = statement.strip()
                 if stmt:
                     cur.execute(stmt)
+        conn.commit()
+        with conn.cursor() as cur:
+            _try_enable_pgvector(cur)
         conn.commit()
     finally:
         conn.close()

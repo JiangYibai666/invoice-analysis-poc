@@ -10,9 +10,15 @@ import httpx
 from a2a.client import A2AClient
 from a2a.types import Artifact, DataPart, Message, TaskEvent, TaskRequest, TaskState, TextPart
 from agents.host_agent.router import RouteDecision, route_query
+from agents.host_agent.long_term_memory import (
+    maybe_rewrite_with_long_term_memory,
+    retrieve_long_term_memories,
+    save_long_term_memories_for_turn,
+)
 from storage.memory_store import (
     ConversationTurn,
     build_memory_context,
+    default_memory_scope_id,
     fail_conversation_turn,
     save_conversation_turn,
     start_conversation_turn,
@@ -185,6 +191,7 @@ def _build_summary(data: dict) -> str:
 
 
 def _memory_report_metadata(
+    memory_scope_id: str,
     conversation_id: str,
     turn_index: int,
     recent_turn_count: int,
@@ -192,6 +199,7 @@ def _memory_report_metadata(
     memory_payload: dict,
 ) -> dict:
     return {
+        "memory_scope_id": memory_scope_id,
         "conversation_id": conversation_id,
         "turn_index": turn_index,
         "used_recent_turns": recent_turn_count,
@@ -199,6 +207,7 @@ def _memory_report_metadata(
         "rewritten": memory_payload.get("rewritten", False),
         "latest_refs": memory_payload.get("latest_refs", {}),
         "selected_refs": memory_payload.get("selected_refs", {}),
+        "long_term": memory_payload.get("long_term", {}),
     }
 
 
@@ -442,12 +451,23 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
         if getattr(part, "type", "") == "text"
     )
     conversation_id = task_request.conversation_id or task_request.session_id
+    memory_scope_id = task_request.memory_scope_id or default_memory_scope_id()
     turn_index, recent_turns = start_conversation_turn(
         conversation_id,
         task_request.session_id,
         query,
+        memory_scope_id=memory_scope_id,
     )
-    rewritten_query, memory_payload = _rewrite_query_with_memory(query, recent_turns)
+    long_term_memories = retrieve_long_term_memories(memory_scope_id, query)
+    long_rewritten_query, long_term_payload = maybe_rewrite_with_long_term_memory(
+        query,
+        long_term_memories,
+    )
+    rewritten_query, memory_payload = _rewrite_query_with_memory(long_rewritten_query, recent_turns)
+    memory_payload["long_term"] = long_term_payload
+    if long_term_payload.get("rewritten") and not memory_payload.get("rewritten"):
+        memory_payload["rewritten"] = True
+        memory_payload["rewritten_query"] = rewritten_query
     create_session(task_request.session_id, query, conversation_id, turn_index)
 
     yield TaskEvent(
@@ -482,6 +502,7 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
                     "query_type": "off_topic",
                     "route": route,
                     "memory": _memory_report_metadata(
+                        memory_scope_id,
                         conversation_id,
                         turn_index,
                         len(recent_turns),
@@ -535,6 +556,7 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
             "raw_data": {
                 **invoice_data,
                 "memory": _memory_report_metadata(
+                    memory_scope_id,
                     conversation_id,
                     turn_index,
                     len(recent_turns),
@@ -553,6 +575,17 @@ async def run_host_graph(task_request: TaskRequest) -> AsyncIterator[TaskEvent]:
             rewritten_query,
             report,
         )
+        try:
+            save_long_term_memories_for_turn(
+                memory_scope_id,
+                conversation_id,
+                turn_index,
+                query,
+                rewritten_query,
+                report,
+            )
+        except Exception:
+            pass
 
         from a2a.types import Artifact, DataPart
         artifact = Artifact(

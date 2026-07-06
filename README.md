@@ -108,6 +108,13 @@ DOXA_CORS_ORIGINS=http://127.0.0.1:8080,http://localhost:8080
 
 # Recent-turn conversation memory
 DOXA_MEMORY_TURN_LIMIT=6
+
+# Cross-conversation long-term memory
+DOXA_LONG_TERM_MEMORY_ENABLED=1
+DOXA_MEMORY_SCOPE_ID=local-user
+DOXA_LONG_TERM_MEMORY_LIMIT=5
+DOXA_EMBEDDING_MODEL=text-embedding-004
+DOXA_MEMORY_MIN_IMPORTANCE=0.4
 ```
 
 `DOXA_DOTENV_OVERRIDE=1` makes values in `.env` override stale shell
@@ -270,6 +277,14 @@ the original user query, rewritten memory query, status, and whether memory was
 used. The browser frontend shows saved conversations in the left History panel;
 use the delete button on a history item to remove that conversation from the
 task-store memory tables.
+
+Cross-conversation long-term memory is keyed by `memory_scope_id`. The browser
+frontend stores one stable scope in `localStorage`, while the CLI uses
+`DOXA_MEMORY_SCOPE_ID` or `local-user`. Completed business answers are distilled
+into entity/summary memories and can be shown or deleted from the frontend Memory
+panel. If PostgreSQL has the `pgvector` extension installed, `init_db()` enables a
+vector column/index for semantic retrieval; otherwise the app falls back to
+structured entity and text matching.
 
 ## Safety Model
 

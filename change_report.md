@@ -241,3 +241,103 @@ delivery order source data.
   - `What is its status?` resolves to the latest primary entity.
   - `Which POs are linked to invoices?` is not rewritten from memory.
   - `Show top 10 purchase orders by value` is not rewritten.
+
+---
+
+Date: 2026-07-06
+
+## Cross-conversation Long-term Memory
+
+### Summary
+
+Implemented a scoped long-term memory layer on top of the existing recent-turn
+conversation memory. The system now accepts a stable `memory_scope_id`, stores
+cross-conversation business memories, retrieves relevant memories before HostAgent
+routing, and keeps frontend conversation history scoped to the current local user.
+
+### Files changed
+
+- `.env.example`
+- `README.md`
+- `a2a/types.py`
+- `agents/host_agent/graph.py`
+- `agents/host_agent/long_term_memory.py`
+- `agents/host_agent/server.py`
+- `cli/chat.py`
+- `doxa-agent-frontend/index.html`
+- `storage/schema.sql`
+- `storage/task_store.py`
+- `storage/memory_store.py`
+- `tools/gemini_sql.py`
+- `change_report.md`
+
+### Key changes
+
+1. Added `memory_scope_id` to `TaskRequest`:
+   - Browser frontend stores a stable `doxa.memoryScopeId` in `localStorage`.
+   - CLI uses `DOXA_MEMORY_SCOPE_ID`, defaulting to `local-user`.
+   - Conversation history and long-term memories are filtered by scope.
+2. Added long-term memory storage:
+   - New `invoice_poc_long_term_memories` table stores memory type, entity type,
+     entity value, content, source conversation/turn, embedding JSON, importance,
+     status, and timestamps.
+   - `invoice_poc_conversations.memory_scope_id` isolates conversation history.
+   - `init_db()` attempts to enable pgvector and create an optional
+     `embedding_vector vector(768)` column/index.
+   - If pgvector is unavailable, the app continues with JSONB embeddings,
+     entity matching, and text fallback retrieval.
+3. Added long-term memory generation:
+   - Completed business turns are distilled into entity and summary memories.
+   - Off-topic and failed turns are not written to long-term memory.
+   - Duplicate entity memories are upserted by scope/type/entity.
+   - Gemini `text-embedding-004` embeddings are generated best-effort and never
+     block normal answers.
+4. Added long-term memory retrieval:
+   - HostAgent retrieves long-term memories before recent-turn rewrite and routing.
+   - Exact invoice/PO/DO entity matches are prioritized.
+   - Semantic retrieval uses pgvector when available, otherwise a structured/text
+     fallback.
+   - Cross-conversation cues such as "previous", "before", "上次", or "之前" can
+     rewrite a question to reference a remembered invoice/PO/DO.
+   - Entity-specific cross-conversation cues such as "last invoice",
+     "previous PO", and "last DO" prefer memories of the requested entity type.
+   - Ambiguous cross-conversation references prefer memories whose original user
+     query explicitly mentioned the referenced invoice/PO/DO number, reducing
+     accidental selection of entities introduced only by later summaries.
+   - Retrieved memories are included in structured memory metadata rather than
+     appending full history to user prompts.
+5. Added memory APIs:
+   - `GET /memories?limit=...&q=...&memory_scope_id=...`
+   - `DELETE /memories/{memory_id}?memory_scope_id=...`
+   - Existing conversation APIs now accept `memory_scope_id`.
+6. Updated frontend scope handling:
+   - Browser requests include `memory_scope_id` so conversations and memories are
+     isolated per local user scope.
+   - The sidebar intentionally shows only `History`; long-term memory remains a
+     backend capability and is not displayed as a separate frontend panel.
+   - Conversation deletion remains separate from long-term memory deletion.
+
+### Configuration
+
+- `DOXA_LONG_TERM_MEMORY_ENABLED=1`
+- `DOXA_MEMORY_SCOPE_ID=local-user`
+- `DOXA_LONG_TERM_MEMORY_LIMIT=5`
+- `DOXA_EMBEDDING_MODEL=text-embedding-004`
+- `DOXA_MEMORY_MIN_IMPORTANCE=0.4`
+
+### Verification
+
+- Python compilation passed for A2A types, task/memory stores, Gemini helpers,
+  HostAgent graph/server, long-term memory module, and CLI.
+- Frontend inline JavaScript syntax validation passed.
+- `init_db()` successfully applied the long-term memory schema to the local
+  PostgreSQL task store.
+- Local schema inspection confirmed `invoice_poc_conversations.memory_scope_id`
+  and `invoice_poc_long_term_memories` were created.
+- Local PostgreSQL did not expose pgvector, so the optional vector column was not
+  created; fallback retrieval remains active.
+- HostAgent route registration confirmed `/memories`, `/memories/{memory_id}`,
+  scoped conversation APIs, and existing task endpoints.
+- Pure function checks confirmed cross-conversation rewrite resolves remembered
+  invoice references, prefers the entity type requested by "last invoice"/"last
+  PO"/"last DO" phrasing, and does not override explicit current invoice IDs.

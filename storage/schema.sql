@@ -3,6 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS invoice_poc_conversations (
     conversation_id VARCHAR(255) PRIMARY KEY,
+    memory_scope_id VARCHAR(255) NOT NULL DEFAULT 'local-user',
     title TEXT,
     created_at TIMESTAMP
     WITH
@@ -11,6 +12,12 @@ CREATE TABLE IF NOT EXISTS invoice_poc_conversations (
     WITH
         TIME ZONE NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE invoice_poc_conversations
+ADD COLUMN IF NOT EXISTS memory_scope_id VARCHAR(255) NOT NULL DEFAULT 'local-user';
+
+CREATE INDEX IF NOT EXISTS idx_inv_conversations_scope_updated
+    ON invoice_poc_conversations (memory_scope_id, updated_at);
 
 CREATE TABLE IF NOT EXISTS invoice_poc_sessions (
     session_id VARCHAR(255) PRIMARY KEY,
@@ -123,3 +130,33 @@ WHERE final_report IS NOT NULL
 
 CREATE INDEX IF NOT EXISTS idx_inv_turns_conversation
     ON invoice_poc_conversation_turns (conversation_id, turn_index);
+
+CREATE TABLE IF NOT EXISTS invoice_poc_long_term_memories (
+    memory_id BIGSERIAL PRIMARY KEY,
+    memory_scope_id VARCHAR(255) NOT NULL,
+    memory_type VARCHAR(50) NOT NULL,
+    entity_type VARCHAR(50),
+    entity_value TEXT,
+    content TEXT NOT NULL,
+    source_conversation_id VARCHAR(255),
+    source_turn_index INTEGER,
+    embedding JSONB,
+    importance DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP
+    WITH
+        TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP
+    WITH
+        TIME ZONE NOT NULL DEFAULT NOW(),
+    UNIQUE (memory_scope_id, memory_type, entity_type, entity_value)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inv_ltm_scope_status_updated
+    ON invoice_poc_long_term_memories (memory_scope_id, status, updated_at);
+
+CREATE INDEX IF NOT EXISTS idx_inv_ltm_scope_entity
+    ON invoice_poc_long_term_memories (memory_scope_id, entity_type, entity_value);
+
+CREATE INDEX IF NOT EXISTS idx_inv_ltm_scope_source
+    ON invoice_poc_long_term_memories (memory_scope_id, source_conversation_id, source_turn_index);

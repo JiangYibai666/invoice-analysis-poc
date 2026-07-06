@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from math import sqrt
 from typing import Any, TypedDict
 
 from psycopg2.extras import Json, RealDictCursor
@@ -11,6 +13,10 @@ from storage.task_store import _connect
 
 DEFAULT_MEMORY_TURN_LIMIT = 6
 MAX_MEMORY_FIELD_CHARS = 1200
+DEFAULT_MEMORY_SCOPE_ID = "local-user"
+DEFAULT_LONG_TERM_MEMORY_LIMIT = 5
+DEFAULT_MEMORY_MIN_IMPORTANCE = 0.4
+EMBEDDING_DIMENSIONS = 768
 
 
 class ConversationTurn(TypedDict):
@@ -40,6 +46,56 @@ class ConversationListItem(TypedDict):
     updated_at: str
 
 
+class LongTermMemory(TypedDict):
+    memory_id: int
+    memory_scope_id: str
+    memory_type: str
+    entity_type: str | None
+    entity_value: str | None
+    content: str
+    source_conversation_id: str | None
+    source_turn_index: int | None
+    importance: float
+    status: str
+    created_at: str
+    updated_at: str
+
+
+def default_memory_scope_id() -> str:
+    return (os.getenv("DOXA_MEMORY_SCOPE_ID") or DEFAULT_MEMORY_SCOPE_ID).strip() or DEFAULT_MEMORY_SCOPE_ID
+
+
+def long_term_memory_enabled() -> bool:
+    raw = os.getenv("DOXA_LONG_TERM_MEMORY_ENABLED")
+    if raw is None:
+        return True
+    return raw.lower() not in {"0", "false", "no", "off"}
+
+
+def long_term_memory_limit() -> int:
+    raw = os.getenv("DOXA_LONG_TERM_MEMORY_LIMIT")
+    if not raw:
+        return DEFAULT_LONG_TERM_MEMORY_LIMIT
+    try:
+        return max(0, min(20, int(raw)))
+    except ValueError:
+        return DEFAULT_LONG_TERM_MEMORY_LIMIT
+
+
+def memory_min_importance() -> float:
+    raw = os.getenv("DOXA_MEMORY_MIN_IMPORTANCE")
+    if not raw:
+        return DEFAULT_MEMORY_MIN_IMPORTANCE
+    try:
+        return max(0.0, min(1.0, float(raw)))
+    except ValueError:
+        return DEFAULT_MEMORY_MIN_IMPORTANCE
+
+
+def embedding_model() -> str:
+    return os.getenv("DOXA_EMBEDDING_MODEL", "text-embedding-004")
+
+
 def _memory_turn_limit() -> int:
     raw = os.getenv("DOXA_MEMORY_TURN_LIMIT")
     if not raw:
@@ -67,19 +123,70 @@ def _assistant_summary(final_report: dict[str, Any]) -> str:
     return ""
 
 
-def ensure_conversation(conversation_id: str, title: str | None = None) -> None:
+def _embedding_vector_literal(embedding: list[float] | None) -> str | None:
+    if not embedding:
+        return None
+    return "[" + ",".join(f"{float(value):.8f}" for value in embedding[:EMBEDDING_DIMENSIONS]) + "]"
+
+
+def _has_vector_column(cur: Any) -> bool:
+    cur.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'invoice_poc_long_term_memories'
+              AND column_name = 'embedding_vector'
+        ) AS has_vector
+        """
+    )
+    row = cur.fetchone()
+    if isinstance(row, dict):
+        return bool(row["has_vector"])
+    return bool(row[0])
+
+
+def _safe_words(text: str) -> list[str]:
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]{2,}", text.lower())
+    stop = {
+        "the", "and", "for", "with", "that", "this", "what", "which", "show",
+        "list", "invoice", "purchase", "order", "delivery", "about", "from",
+    }
+    return [word for word in words if word not in stop][:8]
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    if not left or not right:
+        return 0.0
+    pairs = list(zip(left, right))
+    dot = sum(a * b for a, b in pairs)
+    left_norm = sqrt(sum(a * a for a, _ in pairs))
+    right_norm = sqrt(sum(b * b for _, b in pairs))
+    if not left_norm or not right_norm:
+        return 0.0
+    return dot / (left_norm * right_norm)
+
+
+def ensure_conversation(
+    conversation_id: str,
+    title: str | None = None,
+    memory_scope_id: str | None = None,
+) -> None:
+    scope_id = memory_scope_id or default_memory_scope_id()
     conn = _connect()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO invoice_poc_conversations (conversation_id, title)
-                VALUES (%s, %s)
+                INSERT INTO invoice_poc_conversations (conversation_id, memory_scope_id, title)
+                VALUES (%s, %s, %s)
                 ON CONFLICT (conversation_id) DO UPDATE
                     SET updated_at = NOW(),
+                        memory_scope_id = COALESCE(invoice_poc_conversations.memory_scope_id, EXCLUDED.memory_scope_id),
                         title = COALESCE(invoice_poc_conversations.title, EXCLUDED.title)
                 """,
-                (conversation_id, _truncate(title, 160) if title else None),
+                (conversation_id, scope_id, _truncate(title, 160) if title else None),
             )
         conn.commit()
     finally:
@@ -131,6 +238,7 @@ def start_conversation_turn(
     conversation_id: str,
     session_id: str,
     user_query: str,
+    memory_scope_id: str | None = None,
     title: str | None = None,
     limit: int | None = None,
 ) -> tuple[int, list[ConversationTurn]]:
@@ -141,18 +249,20 @@ def start_conversation_turn(
     conversation allocate distinct turn indexes instead of racing on MAX()+1.
     """
     turn_limit = _memory_turn_limit() if limit is None else max(0, min(20, limit))
+    scope_id = memory_scope_id or default_memory_scope_id()
     conn = _connect()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                INSERT INTO invoice_poc_conversations (conversation_id, title)
-                VALUES (%s, %s)
+                INSERT INTO invoice_poc_conversations (conversation_id, memory_scope_id, title)
+                VALUES (%s, %s, %s)
                 ON CONFLICT (conversation_id) DO UPDATE
                     SET updated_at = NOW(),
+                        memory_scope_id = COALESCE(invoice_poc_conversations.memory_scope_id, EXCLUDED.memory_scope_id),
                         title = COALESCE(invoice_poc_conversations.title, EXCLUDED.title)
                 """,
-                (conversation_id, _truncate(title or user_query, 160)),
+                (conversation_id, scope_id, _truncate(title or user_query, 160)),
             )
             cur.execute(
                 """
@@ -350,31 +460,36 @@ def fail_conversation_turn(
 def load_conversation_debug_turns(
     conversation_id: str,
     limit: int = 20,
+    memory_scope_id: str | None = None,
 ) -> list[ConversationDebugTurn]:
     turn_limit = max(1, min(100, limit))
+    scope_id = memory_scope_id or default_memory_scope_id()
     conn = _connect()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
                 SELECT
-                    turn_index,
-                    session_id,
-                    user_query,
-                    memory_query,
-                    assistant_summary,
-                    final_report,
-                    status,
-                    error_message,
-                    created_at,
-                    completed_at,
-                    updated_at
-                FROM invoice_poc_conversation_turns
-                WHERE conversation_id = %s
-                ORDER BY turn_index DESC
+                    t.turn_index,
+                    t.session_id,
+                    t.user_query,
+                    t.memory_query,
+                    t.assistant_summary,
+                    t.final_report,
+                    t.status,
+                    t.error_message,
+                    t.created_at,
+                    t.completed_at,
+                    t.updated_at
+                FROM invoice_poc_conversation_turns t
+                JOIN invoice_poc_conversations c
+                  ON c.conversation_id = t.conversation_id
+                WHERE t.conversation_id = %s
+                  AND c.memory_scope_id = %s
+                ORDER BY t.turn_index DESC
                 LIMIT %s
                 """,
-                (conversation_id, turn_limit),
+                (conversation_id, scope_id, turn_limit),
             )
             rows = cur.fetchall()
     finally:
@@ -400,8 +515,12 @@ def load_conversation_debug_turns(
     return turns
 
 
-def list_conversations(limit: int = 30) -> list[ConversationListItem]:
+def list_conversations(
+    limit: int = 30,
+    memory_scope_id: str | None = None,
+) -> list[ConversationListItem]:
     conversation_limit = max(1, min(100, limit))
+    scope_id = memory_scope_id or default_memory_scope_id()
     conn = _connect()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -436,10 +555,11 @@ def list_conversations(limit: int = 30) -> list[ConversationListItem]:
                 LEFT JOIN ranked_turns rt
                     ON rt.conversation_id = c.conversation_id
                    AND rt.rn = 1
+                WHERE c.memory_scope_id = %s
                 ORDER BY c.updated_at DESC
                 LIMIT %s
                 """,
-                (conversation_limit,),
+                (scope_id, conversation_limit),
             )
             rows = cur.fetchall()
     finally:
@@ -459,10 +579,26 @@ def list_conversations(limit: int = 30) -> list[ConversationListItem]:
     ]
 
 
-def delete_conversation(conversation_id: str) -> bool:
+def delete_conversation(
+    conversation_id: str,
+    memory_scope_id: str | None = None,
+) -> bool:
+    scope_id = memory_scope_id or default_memory_scope_id()
     conn = _connect()
     try:
         with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM invoice_poc_conversations
+                WHERE conversation_id = %s
+                  AND memory_scope_id = %s
+                """,
+                (conversation_id, scope_id),
+            )
+            if cur.fetchone() is None:
+                conn.commit()
+                return False
             cur.execute(
                 """
                 DELETE FROM invoice_poc_conversation_turns
@@ -485,3 +621,349 @@ def delete_conversation(conversation_id: str) -> bool:
         raise
     finally:
         conn.close()
+
+
+def upsert_long_term_memory(
+    memory_scope_id: str,
+    memory_type: str,
+    entity_type: str | None,
+    entity_value: str | None,
+    content: str,
+    source_conversation_id: str | None,
+    source_turn_index: int | None,
+    importance: float,
+    embedding: list[float] | None = None,
+) -> int:
+    if importance < memory_min_importance():
+        return 0
+    scope_id = memory_scope_id or default_memory_scope_id()
+    vector_literal = _embedding_vector_literal(embedding)
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            has_vector = _has_vector_column(cur)
+            if has_vector and vector_literal:
+                cur.execute(
+                    """
+                    INSERT INTO invoice_poc_long_term_memories
+                        (
+                            memory_scope_id,
+                            memory_type,
+                            entity_type,
+                            entity_value,
+                            content,
+                            source_conversation_id,
+                            source_turn_index,
+                            embedding,
+                            embedding_vector,
+                            importance,
+                            status,
+                            updated_at
+                        )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, 'active', NOW())
+                    ON CONFLICT (memory_scope_id, memory_type, entity_type, entity_value)
+                    DO UPDATE SET
+                        content = EXCLUDED.content,
+                        source_conversation_id = EXCLUDED.source_conversation_id,
+                        source_turn_index = EXCLUDED.source_turn_index,
+                        embedding = EXCLUDED.embedding,
+                        embedding_vector = EXCLUDED.embedding_vector,
+                        importance = GREATEST(invoice_poc_long_term_memories.importance, EXCLUDED.importance),
+                        status = 'active',
+                        updated_at = NOW()
+                    RETURNING memory_id
+                    """,
+                    (
+                        scope_id,
+                        memory_type,
+                        entity_type,
+                        entity_value,
+                        _truncate(content, 3000),
+                        source_conversation_id,
+                        source_turn_index,
+                        Json(embedding or [], dumps=lambda data: json.dumps(data, ensure_ascii=True)),
+                        vector_literal,
+                        max(0.0, min(1.0, importance)),
+                    ),
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO invoice_poc_long_term_memories
+                        (
+                            memory_scope_id,
+                            memory_type,
+                            entity_type,
+                            entity_value,
+                            content,
+                            source_conversation_id,
+                            source_turn_index,
+                            embedding,
+                            importance,
+                            status,
+                            updated_at
+                        )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', NOW())
+                    ON CONFLICT (memory_scope_id, memory_type, entity_type, entity_value)
+                    DO UPDATE SET
+                        content = EXCLUDED.content,
+                        source_conversation_id = EXCLUDED.source_conversation_id,
+                        source_turn_index = EXCLUDED.source_turn_index,
+                        embedding = EXCLUDED.embedding,
+                        importance = GREATEST(invoice_poc_long_term_memories.importance, EXCLUDED.importance),
+                        status = 'active',
+                        updated_at = NOW()
+                    RETURNING memory_id
+                    """,
+                    (
+                        scope_id,
+                        memory_type,
+                        entity_type,
+                        entity_value,
+                        _truncate(content, 3000),
+                        source_conversation_id,
+                        source_turn_index,
+                        Json(embedding or [], dumps=lambda data: json.dumps(data, ensure_ascii=True)),
+                        max(0.0, min(1.0, importance)),
+                    ),
+                )
+            memory_id = int(cur.fetchone()[0])
+        conn.commit()
+        return memory_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def list_long_term_memories(
+    memory_scope_id: str | None = None,
+    limit: int = 30,
+    query: str | None = None,
+) -> list[LongTermMemory]:
+    scope_id = memory_scope_id or default_memory_scope_id()
+    memory_limit = max(1, min(100, limit))
+    words = _safe_words(query or "")
+    conn = _connect()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            clauses = ["memory_scope_id = %s", "status = 'active'"]
+            params: list[Any] = [scope_id]
+            if words:
+                like_clauses = []
+                for word in words:
+                    like_clauses.append("(LOWER(content) LIKE %s OR LOWER(COALESCE(entity_value, '')) LIKE %s)")
+                    params.extend([f"%{word}%", f"%{word}%"])
+                clauses.append("(" + " OR ".join(like_clauses) + ")")
+            params.append(memory_limit)
+            cur.execute(
+                f"""
+                SELECT
+                    memory_id,
+                    memory_scope_id,
+                    memory_type,
+                    entity_type,
+                    entity_value,
+                    content,
+                    source_conversation_id,
+                    source_turn_index,
+                    importance,
+                    status,
+                    created_at,
+                    updated_at
+                FROM invoice_poc_long_term_memories
+                WHERE {' AND '.join(clauses)}
+                ORDER BY importance DESC, updated_at DESC
+                LIMIT %s
+                """,
+                params,
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return [_memory_row_to_dict(row) for row in rows]
+
+
+def search_long_term_memories(
+    memory_scope_id: str | None,
+    query: str,
+    entity_refs: dict[str, str] | None = None,
+    embedding: list[float] | None = None,
+    limit: int | None = None,
+) -> list[LongTermMemory]:
+    if not long_term_memory_enabled():
+        return []
+    scope_id = memory_scope_id or default_memory_scope_id()
+    memory_limit = long_term_memory_limit() if limit is None else max(0, min(20, limit))
+    if memory_limit <= 0:
+        return []
+    refs = entity_refs or {}
+    exact: list[LongTermMemory] = []
+    conn = _connect()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            ref_items = [(kind, value) for kind, value in refs.items() if value]
+            if ref_items:
+                entity_clauses = []
+                params: list[Any] = [scope_id]
+                for kind, value in ref_items:
+                    entity_clauses.append("(entity_type = %s AND entity_value = %s)")
+                    params.extend([kind, value])
+                params.append(memory_limit)
+                cur.execute(
+                    f"""
+                    SELECT
+                        memory_id,
+                        memory_scope_id,
+                        memory_type,
+                        entity_type,
+                        entity_value,
+                        content,
+                        source_conversation_id,
+                        source_turn_index,
+                        importance,
+                        status,
+                        created_at,
+                        updated_at
+                    FROM invoice_poc_long_term_memories
+                    WHERE memory_scope_id = %s
+                      AND status = 'active'
+                      AND ({' OR '.join(entity_clauses)})
+                    ORDER BY importance DESC, updated_at DESC
+                    LIMIT %s
+                    """,
+                    params,
+                )
+                exact = [_memory_row_to_dict(row) for row in cur.fetchall()]
+
+            remaining = max(0, memory_limit - len(exact))
+            if remaining <= 0:
+                return exact
+
+            has_vector = _has_vector_column(cur)
+            vector_literal = _embedding_vector_literal(embedding)
+            if has_vector and vector_literal:
+                cur.execute(
+                    """
+                    SELECT
+                        memory_id,
+                        memory_scope_id,
+                        memory_type,
+                        entity_type,
+                        entity_value,
+                        content,
+                        source_conversation_id,
+                        source_turn_index,
+                        importance,
+                        status,
+                        created_at,
+                        updated_at
+                    FROM invoice_poc_long_term_memories
+                    WHERE memory_scope_id = %s
+                      AND status = 'active'
+                      AND embedding_vector IS NOT NULL
+                    ORDER BY embedding_vector <=> %s::vector
+                    LIMIT %s
+                    """,
+                    (scope_id, vector_literal, remaining),
+                )
+                semantic = [_memory_row_to_dict(row) for row in cur.fetchall()]
+            else:
+                semantic = _fallback_search_memories(cur, scope_id, query, embedding, remaining)
+    finally:
+        conn.close()
+
+    by_id: dict[int, LongTermMemory] = {}
+    for memory in [*exact, *semantic]:
+        by_id[memory["memory_id"]] = memory
+    return list(by_id.values())[:memory_limit]
+
+
+def soft_delete_long_term_memory(
+    memory_id: int,
+    memory_scope_id: str | None = None,
+) -> bool:
+    scope_id = memory_scope_id or default_memory_scope_id()
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE invoice_poc_long_term_memories
+                SET status = 'deleted', updated_at = NOW()
+                WHERE memory_id = %s
+                  AND memory_scope_id = %s
+                  AND status = 'active'
+                """,
+                (memory_id, scope_id),
+            )
+            deleted = cur.rowcount > 0
+        conn.commit()
+        return deleted
+    finally:
+        conn.close()
+
+
+def _fallback_search_memories(
+    cur: Any,
+    memory_scope_id: str,
+    query: str,
+    embedding: list[float] | None,
+    limit: int,
+) -> list[LongTermMemory]:
+    cur.execute(
+        """
+        SELECT
+            memory_id,
+            memory_scope_id,
+            memory_type,
+            entity_type,
+            entity_value,
+            content,
+            source_conversation_id,
+            source_turn_index,
+            embedding,
+            importance,
+            status,
+            created_at,
+            updated_at
+        FROM invoice_poc_long_term_memories
+        WHERE memory_scope_id = %s
+          AND status = 'active'
+        ORDER BY updated_at DESC
+        LIMIT 200
+        """,
+        (memory_scope_id,),
+    )
+    rows = cur.fetchall()
+    words = set(_safe_words(query))
+    scored: list[tuple[float, LongTermMemory]] = []
+    for row in rows:
+        memory = _memory_row_to_dict(row)
+        text = f"{memory.get('entity_value') or ''} {memory['content']}".lower()
+        lexical = sum(1.0 for word in words if word in text)
+        stored_embedding = row.get("embedding") if hasattr(row, "get") else None
+        vector_score = _cosine_similarity(embedding or [], stored_embedding or [])
+        score = lexical + vector_score + float(memory["importance"]) * 0.25
+        if score > 0 or not words:
+            scored.append((score, memory))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [memory for _, memory in scored[:limit]]
+
+
+def _memory_row_to_dict(row: Any) -> LongTermMemory:
+    return {
+        "memory_id": int(row["memory_id"]),
+        "memory_scope_id": row["memory_scope_id"],
+        "memory_type": row["memory_type"],
+        "entity_type": row["entity_type"],
+        "entity_value": row["entity_value"],
+        "content": row["content"],
+        "source_conversation_id": row["source_conversation_id"],
+        "source_turn_index": int(row["source_turn_index"]) if row["source_turn_index"] is not None else None,
+        "importance": float(row["importance"]),
+        "status": row["status"],
+        "created_at": row["created_at"].isoformat(),
+        "updated_at": row["updated_at"].isoformat(),
+    }

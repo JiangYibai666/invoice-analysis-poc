@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from uuid import uuid4
 
@@ -251,9 +252,13 @@ def _display_routing(message: str) -> None:
     console.print(f"[dim]→ Routing to:[/dim] {agent_labels}")
 
 
-def _display_memory_debug(conversation_id: str) -> None:
+def _memory_scope_id() -> str:
+    return (os.getenv("DOXA_MEMORY_SCOPE_ID") or "local-user").strip() or "local-user"
+
+
+def _display_memory_debug(conversation_id: str, memory_scope_id: str) -> None:
     try:
-        turns = load_conversation_debug_turns(conversation_id)
+        turns = load_conversation_debug_turns(conversation_id, memory_scope_id=memory_scope_id)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]Could not load memory for {conversation_id}: {exc}[/red]")
         return
@@ -286,10 +291,11 @@ def _display_memory_debug(conversation_id: str) -> None:
     console.print(tbl)
 
 
-async def ask_once(query: str, conversation_id: str) -> None:
+async def ask_once(query: str, conversation_id: str, memory_scope_id: str) -> None:
     import httpx as _httpx
     request = TaskRequest(
         conversation_id=conversation_id,
+        memory_scope_id=memory_scope_id,
         source_agent="CLI",
         target_agent="HostAgent",
         message=Message(role="user", parts=[TextPart(text=query)]),
@@ -320,8 +326,10 @@ async def ask_once(query: str, conversation_id: str) -> None:
 
 def run_cli() -> None:
     conversation_id = f"conv_{uuid4().hex[:12]}"
+    memory_scope_id = _memory_scope_id()
     console.print(Panel.fit(
-        f"Invoice Analysis CLI  (type 'help' or 'exit')\nConversation: {conversation_id}",
+        f"Invoice Analysis CLI  (type 'help' or 'exit')\n"
+        f"Conversation: {conversation_id}\nMemory scope: {memory_scope_id}",
         title="invoice-analysis-poc",
     ))
     while True:
@@ -339,6 +347,6 @@ def run_cli() -> None:
         if query.lower() == "memory" or query.lower().startswith("memory "):
             parts = query.split(maxsplit=1)
             target_conversation_id = parts[1].strip() if len(parts) == 2 else conversation_id
-            _display_memory_debug(target_conversation_id)
+            _display_memory_debug(target_conversation_id, memory_scope_id)
             continue
-        asyncio.run(ask_once(query, conversation_id))
+        asyncio.run(ask_once(query, conversation_id, memory_scope_id))

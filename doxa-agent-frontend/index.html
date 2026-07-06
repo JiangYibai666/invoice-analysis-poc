@@ -196,10 +196,19 @@
       if (window.crypto && crypto.randomUUID) return `conv_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
       return `conv_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     }
+    function stableMemoryScopeId() {
+      let scopeId = localStorage.getItem("doxa.memoryScopeId");
+      if (!scopeId) {
+        scopeId = "scope_" + newConversationId().replace(/^conv_/, "");
+        localStorage.setItem("doxa.memoryScopeId", scopeId);
+      }
+      return scopeId;
+    }
     const state = {
       mode: localStorage.getItem("doxa.mode") || runtimeConfig.defaultMode || "live",
       backendUrl: localStorage.getItem("doxa.backendUrl") || defaultBackendUrl(),
       conversationId: sessionStorage.getItem("doxa.conversationId") || newConversationId(),
+      memoryScopeId: stableMemoryScopeId(),
       conversations: [],
       seq: 1
     };
@@ -219,6 +228,9 @@
     }
     function titleForConversation(item) {
       return item.last_user_query || item.title || `Conversation ${shortId(item.conversation_id)}`;
+    }
+    function scopeParam() {
+      return `memory_scope_id=${encodeURIComponent(state.memoryScopeId)}`;
     }
     function formatHistoryTime(value) {
       if (!value) return "";
@@ -299,7 +311,7 @@
         return;
       }
       try {
-        const resp = await fetch(`${backendBase()}/conversations?limit=40`, { headers: { "Accept": "application/json" } });
+        const resp = await fetch(`${backendBase()}/conversations?limit=40&${scopeParam()}`, { headers: { "Accept": "application/json" } });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         state.conversations = data.conversations || [];
@@ -390,21 +402,21 @@
     }
     async function loadConversation(conversationId, options = {}) {
       if (!conversationId || state.mode !== "live") return;
-      state.conversationId = conversationId;
-      sessionStorage.setItem("doxa.conversationId", state.conversationId);
-      renderHistory();
+      const previousConversationId = state.conversationId;
       try {
-        const resp = await fetch(`${backendBase()}/conversations/${encodeURIComponent(conversationId)}/turns?limit=80`, { headers: { "Accept": "application/json" } });
+        const resp = await fetch(`${backendBase()}/conversations/${encodeURIComponent(conversationId)}/turns?limit=80&${scopeParam()}`, { headers: { "Accept": "application/json" } });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
+        state.conversationId = conversationId;
+        sessionStorage.setItem("doxa.conversationId", state.conversationId);
         renderConversationTurns(data.turns || []);
+        renderHistory();
         if (!options.skipRefresh) refreshConversations();
       } catch (err) {
-        showConversation();
-        $("messages").innerHTML = "";
-        addUser(`Load conversation ${conversationId}`);
-        const id = addAssistant();
-        renderFinal(id, { routed: [], text: "", sqls: [], tables: [], summary: "", error: `Could not load conversation history. ${(err && err.message) || err}` });
+        state.conversationId = previousConversationId;
+        sessionStorage.setItem("doxa.conversationId", state.conversationId);
+        renderHistory();
+        window.alert(`Could not load conversation history. ${(err && err.message) || err}`);
       }
     }
     function resetConversationUi() {
@@ -421,7 +433,7 @@
       const title = item ? titleForConversation(item) : conversationId;
       if (!window.confirm(`Delete this conversation?\n\n${title}`)) return;
       try {
-        const resp = await fetch(`${backendBase()}/conversations/${encodeURIComponent(conversationId)}`, {
+        const resp = await fetch(`${backendBase()}/conversations/${encodeURIComponent(conversationId)}?${scopeParam()}`, {
           method: "DELETE",
           headers: { "Accept": "application/json" }
         });
@@ -451,6 +463,7 @@
       const base = backendBase();
       const payload = {
         conversation_id: state.conversationId,
+        memory_scope_id: state.memoryScopeId,
         source_agent: "CLI",
         target_agent: "HostAgent",
         message: { role: "user", parts: [{ type: "text", text: q }] }

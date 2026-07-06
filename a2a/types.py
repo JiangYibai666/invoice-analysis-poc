@@ -55,6 +55,7 @@ class TaskRequest(BaseModel):
     task_id: str = Field(default_factory=lambda: f"task_{uuid4().hex[:12]}")
     session_id: str = Field(default_factory=lambda: f"sess_{uuid4().hex[:10]}")
     conversation_id: Optional[str] = None
+    memory_scope_id: Optional[str] = None
     source_agent: str
     target_agent: str
     message: Message

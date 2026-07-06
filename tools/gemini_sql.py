@@ -86,6 +86,18 @@ def generate_content(client: genai.Client, prompt: str) -> str:
     raise RuntimeError(f"All models unavailable. Last error: {last_exc}") from last_exc
 
 
+def generate_embedding(client: genai.Client, text: str, model: str = "text-embedding-004") -> list[float]:
+    try:
+        response = client.models.embed_content(model=model, contents=text)
+        embeddings = getattr(response, "embeddings", None) or []
+        if not embeddings:
+            return []
+        values = getattr(embeddings[0], "values", None)
+        return [float(value) for value in (values or [])]
+    except Exception as exc:  # noqa: BLE001
+        raise _friendly_api_error(exc) from exc
+
+
 def generate_sql(
     client: genai.Client,
     question: str,
