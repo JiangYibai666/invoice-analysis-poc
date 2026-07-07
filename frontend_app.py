@@ -7,7 +7,6 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi import Response
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
 
 FRONTEND_DIR = Path(__file__).resolve().parent / "doxa-agent-frontend"
@@ -40,10 +39,3 @@ async def config_js() -> Response:
         headers={"Cache-Control": "no-store"},
     )
 
-
-@app.get("/DoxaApp.dc.html")
-async def doxa_app() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "DoxaApp.dc.html")
-
-
-app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="frontend-static")
