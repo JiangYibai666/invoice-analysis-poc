@@ -139,6 +139,15 @@ Rules:
 - Focus only on purchase order data. Do not attempt to answer questions about delivery orders.
 - Supplier names: use poi.supplier_name (denormalized in po_item) for item-level queries, or JOIN public.suppliers s ON s.id = po.supplier_id and use s.company_name for PO-level supplier queries.
 - Buyer names: JOIN public.buyer_information b ON b.id = po.buyer_id and use b.buyer_name (NOT b.company_name).
+- ENTITY GROUPING CONSISTENCY: When grouping, ranking, counting, or selecting the
+  "top"/"most"/"highest" supplier or buyer, ALWAYS GROUP BY the human-readable name
+  (suppliers.company_name via po.supplier_id, or buyer_information.buyer_name via
+  po.buyer_id), NEVER by the numeric supplier_id / buyer_id. One real company can span
+  multiple *_id rows, so grouping by id splits it and yields inconsistent totals — that
+  is a bug. For PO-level supplier/buyer aggregates, join the lookup table and GROUP BY
+  its name; do NOT join po_item for these counts, since multiple items per PO would
+  inflate the totals. When a subquery/CTE picks the top supplier or buyer, group by the
+  name there too.
 - Prefer readable aliases.
 """.strip()
 

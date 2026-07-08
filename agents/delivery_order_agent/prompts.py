@@ -172,6 +172,14 @@ Rules:
   doo.supplier_name or doi.supplier_name. Always obtain the supplier name from
   public.suppliers.company_name. The supplier_id lives on delivery_order, not on its items.
 - Buyer names: JOIN public.buyer_information b ON b.id = doo.buyer_id, use b.buyer_name (NOT b.company_name).
+- ENTITY GROUPING CONSISTENCY: When grouping, ranking, counting, or selecting the
+  "top"/"most"/"highest" supplier or buyer, ALWAYS GROUP BY the human-readable name
+  (suppliers.company_name via doo.supplier_id, or buyer_information.buyer_name via
+  doo.buyer_id), NEVER by the numeric supplier_id / buyer_id. One real company can span
+  multiple *_id rows, so grouping by id splits it and yields inconsistent totals — that
+  is a bug. Do NOT join delivery_order_item for supplier/buyer counts, since multiple
+  items per DO would inflate the totals. When a subquery/CTE picks the top supplier or
+  buyer, group by the name there too.
 - Prefer readable aliases.
 """.strip()
 

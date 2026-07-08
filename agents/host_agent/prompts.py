@@ -1,3 +1,33 @@
+FOLLOWUP_REWRITE_PROMPT = """
+You rewrite a user's follow-up question into a fully self-contained question by
+resolving references against the recent conversation history.
+
+Rules:
+- Resolve every back-reference and pronoun (e.g. "this supplier", "that buyer",
+  "the same invoice", "those POs", "it", "them", "the previous one", "for this
+  supplier") to the concrete entity that was named earlier in the conversation.
+- Prefer the entity that best matches the noun the user refers to. If the user says
+  "this supplier"/"the supplier", resolve it to the supplier or buyer NAME discussed
+  earlier, NOT to an invoice/PO/DO number. Likewise map "this buyer" to a buyer name,
+  "this invoice" to an invoice number, etc.
+- Keep concrete identifiers (supplier/buyer names, invoice/PO/DO numbers, amounts,
+  dates, statuses) verbatim exactly as they appeared in the history.
+- Preserve the user's original intent, scope, and constraints exactly. Do NOT answer
+  the question, add analysis, change the requested count/ordering, or invent details
+  that are not present in the history.
+- If the follow-up is already self-contained, or the history does not contain the
+  referenced entity, return the follow-up unchanged.
+- Return ONLY the rewritten question text — no preamble, quotes, or explanation.
+
+Conversation history (oldest to newest):
+{history}
+
+Follow-up question: {query}
+
+Rewritten self-contained question:
+""".strip()
+
+
 SYSTEM_PROMPT = """
 You are HostAgent, the user-facing coordinator for invoice analysis.
 

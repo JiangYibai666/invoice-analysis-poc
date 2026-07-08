@@ -23,8 +23,14 @@ _FORBIDDEN = re.compile(
     re.IGNORECASE,
 )
 
-_HAS_LIMIT = re.compile(r"\bLIMIT\s+\d+", re.IGNORECASE)
-_STRIP_LIMIT = re.compile(r"\bLIMIT\s+\d+\b", re.IGNORECASE)
+# Match only the OUTERMOST/trailing LIMIT (with optional OFFSET) at the very end of
+# the statement. LIMITs inside CTEs or subqueries (e.g. "... ORDER BY x LIMIT 1)" that
+# selects a single top row) are semantically essential and must be preserved when
+# building the COUNT(*) wrapper, otherwise the true-total count is grossly inflated.
+_TRAILING_LIMIT = re.compile(
+    r"\s+LIMIT\s+\d+(?:\s+OFFSET\s+\d+)?\s*;?\s*$",
+    re.IGNORECASE,
+)
 
 MAX_ROWS = 200
 
@@ -63,12 +69,15 @@ def execute_safe_sql(sql: str, db_params: dict[str, Any] | None = None) -> dict:
     """Validate and execute a SELECT query; return columns, rows, count, and total_count."""
     sql = validate_sql(sql)
 
-    # Enforce a hard row cap when the LLM omits LIMIT.
-    if not _HAS_LIMIT.search(sql):
+    # Enforce a hard row cap when the LLM omits an outer LIMIT. Only a trailing LIMIT
+    # counts as the display cap; a LIMIT inside a CTE/subquery does not bound the
+    # final result set, so the cap must still be appended in that case.
+    if not _TRAILING_LIMIT.search(sql):
         sql = f"{sql} LIMIT {MAX_ROWS}"
 
-    # Build a COUNT(*) wrapper to get the true total regardless of LIMIT.
-    sql_no_limit = _STRIP_LIMIT.sub("", sql).strip().rstrip(";")
+    # Build a COUNT(*) wrapper to get the true total regardless of the display LIMIT.
+    # Strip ONLY the trailing LIMIT so LIMITs inside CTEs/subqueries stay intact.
+    sql_no_limit = _TRAILING_LIMIT.sub("", sql).strip().rstrip(";")
     count_sql = f"SELECT COUNT(*) AS total FROM ({sql_no_limit}) AS _count_subq"
 
     def _serialize(val: Any) -> Any:

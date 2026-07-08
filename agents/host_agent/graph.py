@@ -9,6 +9,7 @@ import httpx
 
 from a2a.client import A2AClient
 from a2a.types import Artifact, DataPart, Message, TaskEvent, TaskRequest, TaskState, TextPart
+from agents.host_agent.prompts import FOLLOWUP_REWRITE_PROMPT
 from agents.host_agent.router import RouteDecision, route_query
 from agents.host_agent.long_term_memory import (
     maybe_rewrite_with_long_term_memory,
@@ -142,6 +143,40 @@ def _has_memory_reference_cue(query: str) -> bool:
     return False
 
 
+def _normalize_query(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip().casefold()
+
+
+def _llm_condense_followup(query: str, turns: list[ConversationTurn]) -> str | None:
+    """Rewrite a follow-up into a self-contained question using conversation history.
+
+    Unlike the regex entity resolver, this understands free-form references such as
+    "this supplier", "the same buyer", or "those invoices" because the LLM reads the
+    actual prior turns. Returns None if unavailable or if nothing useful was produced.
+    """
+    history = build_memory_context(turns)
+    if not history:
+        return None
+    try:
+        from tools.gemini_sql import generate_content, get_client
+
+        client = get_client()
+        prompt = FOLLOWUP_REWRITE_PROMPT.format(history=history, query=query)
+        rewritten = generate_content(client, prompt)
+    except Exception:  # noqa: BLE001
+        return None
+
+    rewritten = (rewritten or "").strip().strip("`").strip('"').strip()
+    # Guard against the model echoing the prompt scaffolding or returning nothing.
+    if not rewritten or len(rewritten) > 2000:
+        return None
+    if "\n" in rewritten:
+        rewritten = rewritten.splitlines()[0].strip()
+    if not rewritten:
+        return None
+    return rewritten
+
+
 def _rewrite_query_with_memory(query: str, turns: list[ConversationTurn]) -> tuple[str, dict]:
     """Resolve short follow-up references without appending full history to the query."""
     refs = _latest_entity_refs(turns)
@@ -153,7 +188,33 @@ def _rewrite_query_with_memory(query: str, turns: list[ConversationTurn]) -> tup
     }
 
     has_current_ref = bool(extract_po_no(query) or extract_do_no(query) or extract_invoice_no(query))
-    if not turns or not refs or has_current_ref or not _has_memory_reference_cue(query):
+    is_followup = bool(turns) and _has_memory_reference_cue(query) and not has_current_ref
+    if not is_followup:
+        memory_payload["rewritten"] = False
+        memory_payload["rewritten_query"] = query
+        memory_payload["selected_refs"] = {}
+        return query, memory_payload
+
+    # Primary path: let the LLM resolve any reference type (supplier, buyer, amount,
+    # status, or invoice/PO/DO number) against the recent conversation history. This
+    # handles cases the regex resolver cannot, e.g. "for this supplier".
+    condensed = _llm_condense_followup(query, turns)
+    if condensed and _normalize_query(condensed) != _normalize_query(query):
+        memory_payload["rewritten"] = True
+        memory_payload["rewritten_query"] = condensed
+        memory_payload["rewrite_method"] = "llm"
+        memory_payload["selected_refs"] = _latest_entity_refs([
+            {
+                "turn_index": -1,
+                "user_query": condensed,
+                "memory_query": None,
+                "assistant_summary": None,
+            }
+        ])
+        return condensed, memory_payload
+
+    # Fallback path: regex resolution of invoice/PO/DO numbers only.
+    if not refs:
         memory_payload["rewritten"] = False
         memory_payload["rewritten_query"] = query
         memory_payload["selected_refs"] = {}
@@ -175,6 +236,7 @@ def _rewrite_query_with_memory(query: str, turns: list[ConversationTurn]) -> tup
         labels.append(f"delivery order {selected_refs['do']}")
     rewritten_query = f"{query} Referring to the recent conversation's {', '.join(labels)}."
     memory_payload["rewritten"] = True
+    memory_payload["rewrite_method"] = "regex"
     memory_payload["rewritten_query"] = rewritten_query
     memory_payload["selected_refs"] = selected_refs
     return rewritten_query, memory_payload

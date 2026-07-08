@@ -157,6 +157,14 @@ Rules:
   not today. Only use NOW() for invoices that have never been approved.
 - Use LIMIT to keep results manageable (default 50 unless the user specifies a different number).
 - When aggregating amounts across currencies, group by currency_code so sums are meaningful.
+- ENTITY GROUPING CONSISTENCY: When grouping, ranking, counting, or selecting the
+  "top"/"most"/"highest" supplier or buyer, ALWAYS GROUP BY the human-readable name
+  (supplier_information.company_name or buyer_information.company_name), NEVER by the
+  numeric supplier_id / buyer_id. One real company can span multiple *_id rows, so
+  grouping by id splits it into several and yields different totals than grouping by
+  name — that inconsistency is a bug. When a subquery/CTE must pick the top supplier or
+  buyer, select and GROUP BY the company_name there too (not the id). The same rule
+  applies to any entity that has both an id and a name: group by the name.
 - Prefer readable column aliases (e.g. AS supplier_name, AS total_amount).
 """.strip()
 
