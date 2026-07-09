@@ -11,7 +11,7 @@ against invoice or purchase data, and summarizes the results for business users.
 ## Architecture
 
 ```text
-CLI
+CLI / browser frontend
  └─► HostAgent  (port 10000)
        ├─► InvoiceAgent        (port 10001)
        │     ├─► Gemini  (natural language -> SQL, result summary)
@@ -28,12 +28,14 @@ Task/session store
 | Component        | Role                                                                 |
 | ---------------- | -------------------------------------------------------------------- |
 | **CLI**          | Interactive terminal interface for user questions and rich output    |
+| **Browser frontend** | Web chat UI with scoped conversation History on port 8080       |
 | **HostAgent**    | Gemini route classifier and orchestrator using capability schemas     |
 | **InvoiceAgent** | Invoice, supplier, buyer, amount, status, and payment analytics       |
 | **PurchaseOrderAgent** | Purchase order analytics and Invoice-to-PO matching            |
 | **DeliveryOrderAgent** | Delivery order analytics and Invoice-to-DO matching             |
 | **SQL tool**     | Validates model-generated SQL and runs read-only PostgreSQL queries   |
 | **Task store**   | Persists sessions, tasks, messages, and artifacts for traceability    |
+| **Memory store** | Persists conversation turns and scoped long-term memory records       |
 
 ## Prerequisites
 
@@ -161,11 +163,14 @@ CLI commands:
 | Input                 | Action                        |
 | --------------------- | ----------------------------- |
 | `help`                | Show query examples           |
+| `memory`              | Inspect the current conversation's stored turns |
+| `memory <conversation_id>` | Inspect stored turns for another conversation in the current memory scope |
 | `exit` / `quit` / `q` | Exit the application          |
 
 ## Current Query Flow
 
-1. The CLI sends the user question to HostAgent through the local A2A HTTP API.
+1. The CLI or browser frontend sends the user question to HostAgent through the
+   local A2A HTTP API.
 2. HostAgent creates a session record and asks Gemini to build a structured route decision:
    `{target_agents, reason, required_entities, task_type}`.
 3. HostAgent dispatches the request to one or more specialist agents based on
@@ -183,14 +188,16 @@ CLI commands:
    summary.
 8. For invoice document matching questions, HostAgent composes PO and/or DO
    agent results into a two-way or three-way matching report.
-9. The CLI renders the summary and any markdown table returned by the model or
-   deterministic matching tables returned by the matching agents.
+9. The CLI or browser frontend renders the summary and any markdown table
+   returned by the model or deterministic matching tables returned by the
+   matching agents.
 
 ## Project Structure
 
 ```text
 invoice-analysis-poc/
 ├── main.py                        # Entry point: starts agents and CLI
+├── frontend_app.py                # Browser frontend FastAPI wrapper
 ├── .env.example                   # Template for environment variables
 ├── requirements.txt
 ├── pyproject.toml
@@ -207,6 +214,7 @@ invoice-analysis-poc/
 │   ├── capabilities.py            # Agent capability schema used by HostAgent
 │   ├── host_agent/
 │   │   ├── graph.py               # Orchestration and final report wrapping
+│   │   ├── long_term_memory.py    # Scoped cross-conversation memory extraction/retrieval
 │   │   ├── router.py              # Gemini JSON route classifier using prompts.py
 │   │   ├── server.py              # FastAPI app on port 10000
 │   │   ├── prompts.py             # HostAgent prompt reference
@@ -234,7 +242,11 @@ invoice-analysis-poc/
 │
 ├── storage/
 │   ├── schema.sql                 # PostgreSQL DDL for task/session tables
-│   └── task_store.py              # psycopg2 task/session persistence
+│   ├── task_store.py              # psycopg2 task/session persistence
+│   └── memory_store.py            # conversation history and long-term memory persistence
+│
+├── doxa-agent-frontend/
+│   └── index.html                 # Active browser frontend
 │
 └── cli/
     └── chat.py                    # Rich interactive terminal UI
@@ -281,10 +293,11 @@ task-store memory tables.
 Cross-conversation long-term memory is keyed by `memory_scope_id`. The browser
 frontend stores one stable scope in `localStorage`, while the CLI uses
 `DOXA_MEMORY_SCOPE_ID` or `local-user`. Completed business answers are distilled
-into entity/summary memories and can be shown or deleted from the frontend Memory
-panel. If PostgreSQL has the `pgvector` extension installed, `init_db()` enables a
-vector column/index for semantic retrieval; otherwise the app falls back to
-structured entity and text matching.
+into entity/summary memories. The browser frontend intentionally shows only the
+conversation History panel; long-term memory remains a backend capability exposed
+through the `/memories` APIs. If PostgreSQL has the `pgvector` extension
+installed, `init_db()` enables a vector column/index for semantic retrieval;
+otherwise the app falls back to structured entity and text matching.
 
 ## Safety Model
 
