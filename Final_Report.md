@@ -1,58 +1,64 @@
 # SA61 INDUSTRIAL ATTACHMENT REPORT
 
-## Project Title: AI-Powered Invoice Analysis and Document Matching Agent POC
+Project Title: AI-Powered Invoice Analysis and Document Matching Agent POC
 
-**Student(s):** Project Team / To be filled  
-**Organisation:** Doxa Holdings International Pte Ltd.  
-**Project Repository:** `invoice-analysis-poc`  
-**Report Date:** July 2026  
+Students: Project Team / To be filled
 
-**IN PARTIAL FULFILLMENT OF THE REQUIREMENTS FOR THE**  
-**GRADUATE DIPLOMA IN SYSTEMS ANALYSIS**
+Organisation:        Doxa Holdings International Pte Ltd.
 
-**NUS-ISS**  
-**NATIONAL UNIVERSITY OF SINGAPORE**
+IN PARTIAL FULFILLMENT OF THE REQUIREMENTS FOR THE
+
+GRADUATE DIPLOMA IN SYSTEMS ANALYSIS
+
+July 2026
+
+NUS-ISS
+
+NATIONAL UNIVERSITY OF SINGAPORE
 
 ---
 
-# Contents in the Industrial Attachment Report
+# Contents in the Industrial attachment Report
 
-1. [Introduction](#introduction)
-2. [Project Background](#project-background)
-3. [Overview of Activities](#overview-of-activities)
-4. [Project Plan and schedules](#project-plan-and-schedules)
-5. [Recommendations](#recommendations)
-6. [Things Learned](#things-learned)
-7. [Problems and Solutions](#problems-and-solutions)
-8. [Looking Back](#looking-back)
-9. [Acknowledgement](#acknowledgement)
-10. [Appendix A](#appendix-a)
-11. [Appendix B](#appendix-b)
+1. Introduction
+   - Project Background
+2. Overview of Activities
+   - Project Plan and schedules
+   - Phases / activities / deliverables (high level description ONLY!)
+3. Recommendations
+   - Short term recommendation
+   - Long term recommendation
+4. Things Learned
+5. Problems and Solutions
+6. Looking Back
+7. Acknowledgement
+8. Appendix A
+9. Appendix B
 
 ---
 
 # Introduction
 
-This industrial attachment project delivered a proof of concept for an AI-powered invoice analysis and document matching assistant for Doxa's procurement, finance, and logistics workflows. The project focuses on one function within the broader DOXA CONNEX AI agent programme: the invoice matching and analysis capability that helps users query invoice, purchase order (PO), and delivery order (DO) records using natural language.
+This industrial attachment project delivered a proof of concept for an AI-powered invoice analysis and document matching agent for Doxa's procurement, finance, and logistics workflows. The project is one functional module within the broader DOXA CONNEX AI agent programme. It focuses on the invoice matching capability under the finance and payment domain, allowing users to query invoice, purchase order (PO), and delivery order (DO) data through natural language and receive explainable business analysis.
 
-The implemented system is a local multi-agent application. A user can ask business questions through a command-line interface or browser chat UI, and a HostAgent routes the request to specialist agents for invoice, purchase order, and delivery order analysis. The specialist agents translate natural-language questions into read-only PostgreSQL queries, execute them safely, and return concise business summaries. For cross-document questions, the system coordinates multiple agents and uses invoice line-item references as the authoritative linkage between invoices, POs, and DOs.
+The implemented system is a local multi-agent application. Users can ask business questions through a command-line interface or a browser chat interface. HostAgent routes each request to the appropriate specialist agent, including InvoiceAgent, PurchaseOrderAgent, and DeliveryOrderAgent. The specialist agents convert natural-language questions into read-only PostgreSQL queries, execute validated database queries, and return business-oriented summaries. For cross-document questions, the system coordinates multiple agents and uses invoice line-item reference fields as the authoritative linkage between invoices, POs, and DOs.
 
-The objective of the project was not to replace the full DOXA CONNEX production platform immediately. Instead, it demonstrates the feasibility of using agent orchestration, natural-language data access, deterministic document-link matching, conversation memory, and a lightweight browser interface as the foundation for a future production-ready invoice matching agent.
+The purpose of this project is not to replace the full DOXA CONNEX production platform immediately. Instead, it validates the feasibility of multi-agent orchestration, natural-language data access, deterministic document matching, conversation memory, long-term memory, task traceability, and a lightweight user interface. These capabilities provide a foundation for a future production-ready invoice matching agent.
 
-# Project Background
+## Project Background
 
-DOXA CONNEX's strategic AI plan describes a suite of 16 agents across procurement, finance and payment, deep-tier financing, logistics and delivery, compliance and risk, analytics and reporting, and customer success. Within that plan, the **Invoice Matching Agent** is positioned under the finance and payment domain. Its intended business value is to automate three-way or four-way invoice matching, reduce manual checking, explain exceptions, and shorten invoice processing time from days to hours.
+The DOXA CONNEX AI agent strategy includes 16 agents across procurement, finance and payment, deep-tier financing, logistics and delivery, compliance and risk, analytics and reporting, and customer success. The invoice matching agent belongs to the finance and payment domain. Its business value is to automate three-way or four-way matching, reduce manual checking, explain exceptions, and shorten invoice processing time from days to hours.
 
-The current POC implements the core technical foundation for that vision. It connects to existing PostgreSQL data sources for invoice, PO, and DO records, exposes specialist agents over a lightweight A2A HTTP protocol, and allows business users to ask questions such as:
+This POC is a functional implementation of that strategy. It connects to existing PostgreSQL data sources, reads invoice, PO, and DO records, exposes multiple agent services through a lightweight A2A HTTP protocol, and supports questions such as:
 
 - Which invoices have been pending for more than 60 days?
 - Which suppliers have the highest invoice amounts?
 - Which purchase orders have the highest value?
-- Which delivery orders are pending?
-- Does an invoice match its related PO and DO?
-- What about its PO or DO in a follow-up question?
+- Which delivery orders are still pending?
+- Does a specific invoice match its related PO and DO?
+- What about its PO or DO after a previous question?
 
-The project uses a modular architecture:
+The system uses a modular architecture:
 
 ```text
 CLI / Browser Frontend
@@ -60,31 +66,31 @@ CLI / Browser Frontend
        -> InvoiceAgent
        -> PurchaseOrderAgent
        -> DeliveryOrderAgent
-  -> PostgreSQL task, session, conversation, and memory store
+  -> PostgreSQL task/session/conversation/memory store
 ```
 
-The HostAgent is responsible for routing, memory handling, cross-agent coordination, and final response composition. The InvoiceAgent handles invoice, supplier, buyer, payment status, and invoice amount analytics. The PurchaseOrderAgent handles purchase order analytics. The DeliveryOrderAgent handles delivery order analytics. A deterministic matching utility provides invoice-to-PO and invoice-to-DO checks using invoice item fields and UUID-based linkage.
+HostAgent handles intent routing, memory handling, cross-agent coordination, and final response composition. InvoiceAgent handles invoice, supplier, buyer, payment status, and amount analysis. PurchaseOrderAgent handles purchase order analysis. DeliveryOrderAgent handles delivery order analysis. The deterministic document matching tool checks invoice-to-PO and invoice-to-DO matching based on invoice item fields and UUID linkage.
 
-The project is aligned with the overall DOXA plan in the following ways:
+The project aligns with the DOXA roadmap as follows:
 
 | Overall programme item | POC contribution |
 | --- | --- |
 | Finance and payment: Invoice Matching Agent | Implements the first working natural-language invoice analysis and document matching POC. |
 | Agent orchestration | Implements HostAgent routing and specialist-agent dispatch. |
-| PostgreSQL data foundation | Reads invoice, PO, and DO records from configured PostgreSQL databases. |
+| PostgreSQL data foundation | Reads invoice, PO, and DO data from configured invoice and purchase databases. |
 | Human-facing agent UI | Provides both CLI and browser chat interfaces. |
-| Auditability and memory | Persists sessions, turns, messages, artifacts, recent memory, and long-term memory records. |
-| Future Connex integration | Uses modular API, environment configuration, and frontend separation that can be extended into Connex workflows. |
+| Auditability and memory | Persists sessions, tasks, messages, artifacts, conversation turns, and memory records. |
+| Future Connex integration foundation | Uses modular APIs, environment-based configuration, and frontend/backend separation. |
 
 # Overview of Activities
 
-The project activities were organised around understanding the business workflow, designing the POC architecture, implementing the multi-agent backend, building a usable interface, and documenting limitations and future improvements.
+The project activities covered business understanding, requirement capture, system analysis, architecture design, implementation, UI development, verification, and documentation.
 
-## Business and workflow understanding
+**Business and workflow understanding**
 
-The first activity was to understand where invoice analysis fits within the DOXA CONNEX agent programme. The overall plan identified invoice matching as a high-priority finance and payment function because manual invoice checking is time-consuming, error-prone, and dependent on cross-referencing multiple documents. The POC therefore focused on the practical business questions that finance, procurement, and operations users would ask during invoice review.
+The project first analysed where invoice analysis fits within the DOXA CONNEX AI agent landscape. Invoice matching is a high-priority finance and payment capability because manual invoice checking requires users to cross-reference multiple systems and documents, which is time-consuming and error-prone.
 
-The source data model was studied through `database_structure.md` and the active application code. The key tables used by this POC are:
+The key business tables used by this POC include:
 
 - `public.invoice`
 - `public.invoice_item`
@@ -95,157 +101,180 @@ The source data model was studied through `database_structure.md` and the active
 - `public.delivery_order`
 - `public.delivery_order_item`
 
-The analysis showed that `invoice_item` is the most important pivot for document matching because it contains the PO and DO reference fields used to relate invoice line items to purchase and delivery records.
+The analysis identified `invoice_item` as the core pivot for document matching because it contains the PO and DO reference fields needed to connect invoice line items to procurement and delivery records.
 
-## Requirements capture
+**Requirement capture**
 
-The functional requirements were translated into the following POC capabilities:
+The business goals were translated into the following POC functional requirements:
 
-- Natural-language invoice analytics.
-- Natural-language PO and DO analytics.
-- HostAgent routing to the correct specialist agent.
-- Multi-agent responses for cross-domain questions.
-- Read-only SQL generation and execution.
-- Deterministic invoice-to-PO and invoice-to-DO matching checks.
-- Browser chat interface with saved conversation history.
-- Recent-turn memory for follow-up questions.
-- Long-term scoped memory for cross-conversation references.
-- Session and task persistence for traceability.
+- Support natural-language invoice analysis.
+- Support natural-language PO and DO analysis.
+- Route each request to the correct specialist agent through HostAgent.
+- Support multi-agent collaboration for cross-domain questions.
+- Generate, validate, and execute read-only SQL.
+- Provide deterministic invoice-to-PO and invoice-to-DO matching.
+- Provide a browser chat interface with conversation History.
+- Support recent-turn memory for follow-up questions.
+- Support scoped long-term memory across conversations.
+- Persist sessions, tasks, messages, artifacts, and conversation turns for traceability.
 
-The non-functional requirements were framed around safety, traceability, maintainability, and local deployability:
+The main non-functional requirements were safety, traceability, maintainability, and local operability:
 
-- Read-only database access for analytics databases.
-- SQL validation to block write, DDL, and administrative statements.
-- Result row limits to reduce accidental large result sets.
-- Environment-based configuration.
-- Separate specialist modules for clearer responsibility boundaries.
-- Persistent task/session/memory storage for audit and debugging.
+- Business data sources are accessed through read-only database connections.
+- Generated SQL is validated to block write operations, DDL, and administrative statements.
+- Query result sizes are capped to avoid accidental large result sets.
+- Database connections, ports, Gemini API key, and memory settings are configured through environment variables.
+- HostAgent, specialist agents, tools, storage, and frontend are separated into clear modules.
+- Session and memory data are stored in separate `invoice_poc_*` tables for audit and debugging.
 
-## Analysis and design
+**Analysis and design**
 
-The system was designed as a multi-agent POC rather than a single monolithic chatbot. This design supports the broader DOXA plan, where each business domain can be represented by a specialist agent.
+The project uses a multi-agent architecture instead of a single monolithic chatbot. This design fits the long-term DOXA CONNEX roadmap because additional business domains can be added as independent specialist agents.
 
 The main design decisions were:
 
-- Use HostAgent as the single entry point for user requests.
-- Use capability metadata in `agents/capabilities.py` to describe each specialist agent.
-- Use Gemini for routing, SQL generation, summarisation, and memory-related rewriting.
-- Use deterministic code for document-link resolution where correctness is more important than open-ended generation.
-- Keep the invoice and purchase data sources read-only.
-- Store task, session, conversation, and memory data in separate `invoice_poc_*` tables.
-- Keep the POC frontend simple but usable through a chat interface and History panel.
+- Use HostAgent as the unified entry point for user requests.
+- Use `agents/capabilities.py` to describe each specialist agent's responsibility boundary.
+- Use Gemini for routing, SQL generation, summarisation, embeddings, and follow-up rewriting.
+- Use deterministic code for critical document matching logic rather than relying only on generated responses.
+- Access invoice and purchase data sources in read-only mode.
+- Store task, session, message, result, recent memory, and long-term memory data in PostgreSQL.
+- Use a simple browser chat interface and History panel for demonstration and business validation.
 
-## Implementation
+**Implementation work**
 
-The implementation delivered the following major components:
+The project implemented the following major components:
 
 | Component | Description |
 | --- | --- |
-| `main.py` | Starts the HostAgent, specialist agents, frontend, database initialisation, and CLI. |
-| `a2a/` | Defines the lightweight agent-to-agent request, response, task, message, and artifact protocol. |
-| `agents/host_agent/` | Implements routing, orchestration, final report composition, recent memory, and long-term memory handling. |
-| `agents/invoice_agent/` | Implements invoice analytics with Gemini text-to-SQL and summarisation. |
-| `agents/purchase_order_agent/` | Implements purchase order analytics against purchase data. |
-| `agents/delivery_order_agent/` | Implements delivery order analytics against purchase data. |
+| `main.py` | Starts HostAgent, specialist agents, frontend, database initialisation, and CLI. |
+| `a2a/` | Defines lightweight agent-to-agent request, response, task, message, and artifact models. |
+| `agents/host_agent/` | Implements routing, orchestration, report composition, recent memory, and long-term memory handling. |
+| `agents/invoice_agent/` | Implements invoice analysis with Gemini text-to-SQL and summarisation. |
+| `agents/purchase_order_agent/` | Implements purchase order analysis. |
+| `agents/delivery_order_agent/` | Implements delivery order analysis. |
 | `tools/sql_query.py` | Provides safe read-only SQL validation and execution. |
 | `tools/document_match_query.py` | Provides deterministic invoice-to-PO and invoice-to-DO matching utilities. |
-| `storage/` | Provides PostgreSQL schema and persistence for sessions, tasks, conversation turns, and memories. |
-| `cli/chat.py` | Provides an interactive terminal chat interface. |
+| `storage/` | Provides PostgreSQL schema and persistence for sessions, tasks, and memory. |
+| `cli/chat.py` | Provides the interactive command-line chat interface. |
 | `frontend_app.py` and `doxa-agent-frontend/index.html` | Provide the browser chat UI and History panel. |
 
-## User interface and interaction flow
+**User interface and interaction flow**
 
-The user can run the application with:
+Users can run the local POC with:
 
 ```bash
 python main.py
 ```
 
-The application starts the local agents and browser frontend. A user can then ask natural-language questions from the CLI or browser. For example, if the user asks "Which invoices have been pending for more than 60 days?", the HostAgent routes the request to the InvoiceAgent. If the user asks "Check invoice INV-00000001 and its related PO and DO", the HostAgent can coordinate multiple agents and return a combined answer.
+On startup, the system initialises the task database and starts HostAgent, InvoiceAgent, PurchaseOrderAgent, DeliveryOrderAgent, and the browser frontend. Users can ask natural-language questions in either the CLI or the browser. For example, when a user asks "Which invoices have been pending for more than 60 days?", HostAgent routes the request to InvoiceAgent. When a user asks "Check invoice INV-00000001 and its related PO and DO", HostAgent coordinates multiple specialist agents and produces a combined response.
 
-The browser interface also maintains a local conversation scope and shows saved conversations in the History sidebar. This makes the POC more practical for demonstration because users can revisit previous question-and-answer turns rather than treating every query as isolated.
+The browser frontend also maintains a local conversation scope and shows saved conversations in the left History panel. Users can reopen historical conversations and delete saved conversation records. This makes the POC closer to a practical business assistant rather than a one-off query tool.
 
-## Verification activities
+**Verification activities**
 
-The project includes recorded verification in `change_report.md`. The verification activities include:
+The project completed the following verification activities:
 
-- Python compilation checks for key modules.
-- Database schema initialisation checks.
-- HostAgent route registration checks.
-- Router fallback behaviour checks.
-- Query rewrite checks for follow-up questions.
-- Threaded turn-index checks to avoid duplicated conversation turn numbers.
-- Frontend JavaScript syntax validation.
-- Startup verification for `python main.py`.
-- Environment handling checks for `.env` override behaviour.
+- Compiled key Python modules.
+- Verified that `init_db()` can apply the database schema.
+- Verified HostAgent API route registration.
+- Verified fallback behaviour when Gemini routing output is malformed.
+- Verified follow-up rewriting for questions such as "What about its PO?".
+- Verified that concurrent requests do not duplicate conversation turn indexes.
+- Validated inline frontend JavaScript syntax.
+- Verified that `python main.py` can start the local agents and frontend.
+- Verified that `.env` override prevents stale shell environment variables from affecting runtime configuration.
 
-At the time of this report, the repository contains test cache files but does not contain maintainable `tests/*.py` source files. A future project phase should restore or recreate the automated test suite so that the verification steps can be repeated consistently.
+At the time of this report, the repository contains test cache files but does not contain maintainable `tests/*.py` source files. A future phase should restore or recreate the automated test suite so routing, SQL safety, matching logic, memory behaviour, and frontend APIs can be validated repeatedly.
 
-# Project Plan and schedules
+## Project Plan and schedules
 
-The project follows the high-level phases required by the attachment report guideline. Because this is a POC within a larger 16-agent programme, the schedule is expressed at feature and milestone level rather than as a full production delivery plan.
+The actual project timeline ran from Week 1 to Week 18. The work started with LLM, RAG, Chain, and Agent capability validation, then moved into business process analysis, A2A multi-agent architecture design, local POC implementation, invoice data integration, PO/DO matching, browser frontend development, and conversation memory. The schedule shows a progression from technical feasibility validation to business POC delivery.
 
-| Phase | Activities | Deliverables | Status |
+| Week | Date range | Main work focus | Main deliverables / results |
 | --- | --- | --- | --- |
-| Business Modelling Workflow | Understand invoice, PO, and DO business workflow; identify manual matching pain points; map the POC to the broader DOXA CONNEX agent plan. | Project scope, business context, target users, high-level use cases. | Completed for POC. |
-| Requirement Capture Workflow | Define natural-language query requirements, document matching requirements, memory requirements, UI requirements, and safety constraints. | Functional and non-functional requirement summary; query examples; environment requirements. | Completed for POC. |
-| Analysis Workflow | Analyse database structure, identify key tables, define agent responsibilities, and determine invoice-item linkage strategy. | Database reference, agent capability model, matching analysis. | Completed for POC. |
-| Design Workflow | Design HostAgent orchestration, specialist agent APIs, safe SQL tool, task/session store, memory model, and frontend interaction model. | Architecture design, data model, module structure, route flow. | Completed for POC. |
-| Implementation Workflow | Build backend agents, A2A layer, SQL tools, document matching utilities, memory persistence, CLI, and browser frontend. | Working POC codebase. | Completed for POC. |
-| Test Workflow | Compile key modules, initialise schema, verify routing, memory, frontend syntax, startup, and selected query flows. | Verification notes in `change_report.md`. | Partially completed; automated tests should be restored. |
-| Deployment Workflow | Provide local startup through `python main.py`, environment configuration, and frontend on local port. | Local running application and README instructions. | Completed for local POC; production deployment pending. |
+| Week 1 | 2026-03-02 to 2026-03-06 | Set up the project environment and validated Gemini, Anthropic, Chain, RAG, and tool-using Agent prototypes. | LLM call validation, Chain prototype, RAG Q&A flow, Agent tool-calling prototype. |
+| Week 2 | 2026-03-09 to 2026-03-13 | Reviewed Prompt, structured output, RAG, multi-model integration, and the management plan for 16 agents. | Core AI capability review, design deliverables list, interview template, Agent board draft. |
+| Week 3 | 2026-03-13 to 2026-03-19 | Implemented a production-style RAG flow with CSV loading, text splitting, embeddings, vector persistence, and continuous conversation. | Reusable RAG flow, session entry point, retrieval logs, and fallback mechanism. |
+| Week 4 | 2026-03-20 to 2026-03-26 | Analysed Procure-to-Pay, subcontractor processes, business roles, core scenarios, and Agent responsibility boundaries. | End-to-end workflow understanding, Concierge and specialist Agent collaboration model, team task split. |
+| Week 5 | 2026-03-27 to 2026-04-02 | Deepened business process and database understanding, and refined RFQ, PO, receiving, invoice matching, and payment scheduling requirements. | Procurement module requirements, 3-5 single-responsibility Agent plan, infrastructure execution sequence. |
+| Week 6 | 2026-04-03 to 2026-04-09 | Validated the procure-to-pay document loop and designed the Doxa Connex multi-agent architecture and security boundary. | Multi-agent architecture, A2A/Bedrock/Pinecone/Aurora choices, JWT/RBAC design, four-phase roadmap. |
+| Week 7 | 2026-04-10 to 2026-04-16 | Designed the A2A POC scenario and created a local implementation plan based on LangChain, LangGraph, and A2A. | A2A POC business design, technical architecture review, VPC/JWT/RBAC security design updates. |
+| Week 8 | 2026-04-17 to 2026-04-23 | Froze the A2A POC architecture and completed local implementation, protocol structures, orchestration, mock queries, state tables, and end-to-end validation. | A2A protocol data structures, Orchestrator and child Agents, PostgreSQL state tables, Docker Compose local validation. |
+| Week 9 | 2026-04-24 to 2026-04-30 | Progressed ECS Fargate, Cloud Map, API Gateway, Lambda Authorizer, NLB, and Aurora permission preparation. | Infrastructure preparation, call-chain design, Invoice/Entity API samples, blocker summary. |
+| Week 10 | 2026-05-01 to 2026-05-07 | Scoped the AML A2A POC and designed the Host, Market, and Transaction three-agent collaboration model. | AML POC scope, technology choices, LangGraph dispatch loop, SQLite state tables, risk report demo flow. |
+| Week 11 | 2026-05-08 to 2026-05-14 | Completed AML multi-agent specifications, AgentCards, A2A messages, state transitions, and demo path, then shifted focus to invoice data. | Executable-level specifications, two-stage validation plan, sample data, invoice data direction. |
+| Week 12 | 2026-05-18 to 2026-05-22 | Started the Invoice Analysis POC, analysed PostgreSQL database structure, and implemented task/session storage and the Host/Invoice A2A loop. | Invoice database analysis, PostgreSQL task/session store, three invoice query scenarios, interactive CLI. |
+| Week 13 | 2026-05-25 to 2026-05-29 | Completed the natural-language-to-SQL-to-summary flow and added read-only query execution and forbidden keyword blocking. | End-to-end text-to-SQL flow, safe SQL execution, task/session tracking, four demo query scenarios. |
+| Week 14 | 2026-06-01 to 2026-06-05 | Prepared Invoice Agent demos, reviewed key invoice workflows and multi-role views, and selected PO/DO capability as the next focus. | Complex query demo, invoice workflow review, Buyer login and multi-role requirements, PO/DO next plan. |
+| Week 15 | 2026-06-08 to 2026-06-12 | Added PurchaseOrderAgent and DeliveryOrderAgent, and implemented deterministic Invoice-to-PO/DO matching plus two-way and three-way orchestration. | PO/DO natural-language analysis, deterministic matching logic, batch matching, 15 regression tests. |
+| Week 16 | 2026-06-15 to 2026-06-19 | Fixed CLI rendering, standardised Router JSON output, and improved Top-N summaries, document matching routing, and PO-to-DO context. | Stable CLI output, Router contract, calibrated matching result wording, stability closure before frontend work. |
+| Week 17 | 2026-06-22 to 2026-06-28 | Built the browser frontend, connected HostAgent SSE streaming, and implemented Live/Demo modes, result rendering, responsive layout, and CORS hardening. | Browser chat UI, History interaction foundation, SSE communication, SQL/table/error rendering, frontend runtime configuration. |
+| Week 18 | 2026-06-29 to 2026-07-06 | Designed and implemented conversation_id-based multi-turn memory, recent context, History, memory_scope_id, and long-term memory. | Conversation and turn tables, follow-up rewriting, browser History, memory isolation, long-term memory, concurrency and regression verification. |
 
-The broader DOXA CONNEX plan describes a four-month delivery model: discovery, design, development, and UAT/production rollout. This POC aligns most closely with the first production candidate from Month 3: **Sprint 1 - Invoice Matching Agent v1**. It also includes supporting infrastructure that would be useful for later agents, such as HostAgent routing, task storage, conversation memory, and frontend history.
+The overall plan can be summarised into four phases: Week 1-6 covered AI capability validation and business modelling; Week 7-11 covered A2A and multi-agent architecture design with preliminary POCs; Week 12-16 delivered the core Invoice Analysis POC; and Week 17-18 completed the frontend, conversation history, and memory capabilities.
+
+## Phases / activities / deliverables (high level description ONLY!)
+
+| Phase/Workflow | Weeks | Activities | Deliverables |
+| --- | --- | --- | --- |
+| Business Modelling Workflow | Week 1-6 | Validated LLM, RAG, Chain, and Agent tool-calling capabilities, and analysed Procure-to-Pay, subcontractor processes, procurement modules, and invoice matching business background. | AI capability validation, business workflow understanding, Agent responsibility boundaries, initial project roadmap. |
+| Requirement Capture Workflow | Week 2-7 | Collected BRD, architecture, data model, API, security, KPI, RFQ, PO, receiving, invoice matching, and payment scheduling requirements. | Functional requirements, non-functional requirements, security and permission requirements, Agent board draft. |
+| Analysis Workflow | Week 4-12 | Analysed business roles, core scenarios, database structures, A2A interaction flows, and PostgreSQL data sources required by the Invoice Analysis POC. | Business object analysis, database structure analysis, invoice query scenarios, Host/Invoice A2A loop. |
+| Design Workflow | Week 6-11 | Designed the Doxa Connex multi-agent architecture, A2A POC, LangChain/LangGraph orchestration, state tables, JWT/RBAC, security boundary, and AML preliminary POC. | Multi-agent architecture design, A2A protocol structure, state storage model, demo path. |
+| Implementation Workflow | Week 8-18 | Implemented the A2A prototype, Invoice Analysis POC, PO/DO agents, deterministic matching, browser frontend, conversation history, and long-term memory. | Runnable local POC, CLI, browser frontend, PO/DO matching, and memory capability. |
+| Test Workflow | Week 12-18 | Verified invoice queries, SQL safety, A2A calls, PO/DO matching, frontend rendering, memory rewriting, concurrency, and regression scenarios. | Query demos, 15 regression tests, concurrency verification, frontend syntax and runtime verification. |
+| Deployment Workflow | Week 17-18 | Connected the frontend to the main startup flow and refined runtime configuration, URL discovery, CORS, default ports, and local execution. | `python main.py` local startup, browser frontend, runtime configuration, and user instructions. |
 
 # Recommendations
 
-This section states recommendations for the system and future phases of development.
+This section provides recommendations for the system and future development phases.
 
 ## Short term recommendation
 
-1. **Restore automated tests.** The repository should include source test files for router behaviour, SQL validation, matching logic, memory rewriting, and frontend API behaviour. Current verification is documented, but repeatable tests are necessary before production hardening.
+1. **Restore automated tests.** The repository should include source test files for routing, SQL validation, matching logic, memory rewriting, and frontend APIs. Current verification is useful, but repeatable tests are required before production hardening.
 
-2. **Add deterministic matching tests using realistic fixtures.** Invoice-to-PO and invoice-to-DO matching are business-critical. Tests should cover matched lines, missing PO/DO references, quantity mismatch, amount mismatch, missing invoice, multi-line invoice, and batch matching.
+2. **Add realistic fixtures for matching logic.** Invoice-to-PO and invoice-to-DO matching are business-critical. Test data should cover full matches, missing PO/DO references, quantity mismatch, amount mismatch, missing invoices, multi-line invoices, and batch matching.
 
-3. **Strengthen SQL validation.** The current validator blocks dangerous keywords and enforces read-only execution. For a stronger safety model, it should be enhanced with a PostgreSQL-aware parser, schema/table allowlist, statement timeout, and row/byte limits at the database level.
+3. **Strengthen SQL safety.** The current system blocks dangerous keywords and uses read-only database connections. Future work should add a PostgreSQL-aware parser, schema/table allowlists, statement timeouts, and row/byte limits at the database level.
 
-4. **Expand schema context carefully.** Text-to-SQL accuracy depends heavily on prompt schema context. More business definitions should be added for invoice status, payment status, supplier naming, buyer naming, currency treatment, and overdue calculations.
+4. **Improve schema context and business definitions.** Text-to-SQL accuracy depends heavily on schema prompts. The system should define invoice status, payment status, supplier, buyer, currency, overdue logic, and other business terms more explicitly.
 
-5. **Improve user-facing error handling.** Gemini configuration, database connectivity, ambiguous questions, and unsupported business concepts should produce clear user-facing messages and operational logs.
+5. **Improve user-facing error messages.** Gemini configuration errors, database connection failures, ambiguous questions, and unsupported business concepts should return clear and actionable messages.
 
-6. **Clarify document matching scope.** PO matching currently checks quantity, unit price, and net amount. DO matching is quantity-based because the current delivery order records do not carry invoice amounts. This distinction should be visible in the UI and reports.
+6. **Clarify document matching boundaries.** PO matching checks quantity, unit price, and net amount. DO matching is currently quantity-based because current DO data does not carry invoice amount fields. This distinction should be visible in the UI and reports.
 
-7. **Add role-based access assumptions.** Before integration into Connex, the system should define which user roles can query which company, project, supplier, invoice, PO, and DO records.
+7. **Define role and data access assumptions.** Before Connex integration, the system should define which roles can access which company, project, supplier, invoice, PO, and DO records.
 
 ## Long term recommendation
 
 1. **Integrate with Connex APIs and authentication.** The local POC should evolve into a service that uses Connex identity, authorisation, tenant boundaries, audit logs, and production API contracts.
 
-2. **Add document AI extraction.** The broader plan mentions AWS Textract for structured document extraction. Future phases should connect uploaded invoice, PO, and DO documents to extracted line-item data and confidence scores.
+2. **Add document AI extraction.** Future phases should support invoice, PO, and DO document upload, structured line-item extraction, and confidence scores.
 
-3. **Build a human-in-the-loop exception workflow.** Production invoice matching should allow finance users to approve matches, reject mismatches, add notes, escalate exceptions, and export audit trails.
+3. **Build a human-in-the-loop exception workflow.** Production invoice matching should allow finance users to approve matches, reject mismatches, add notes, escalate exceptions, and export audit records.
 
-4. **Introduce confidence scoring and explainability.** The agent should explain why a match passed or failed, which fields were compared, where values came from, and which records require manual review.
+4. **Introduce confidence scoring and explainability.** The system should explain why a match passed or failed, which fields were compared, where the values came from, what variances were found, and which records require manual review.
 
-5. **Move from POC memory to governed enterprise memory.** Long-term memory should include privacy controls, retention policies, tenant isolation, deletion workflows, and monitoring for incorrect memory reuse.
+5. **Upgrade POC memory into governed enterprise memory.** Long-term memory needs privacy controls, retention rules, tenant isolation, deletion workflows, and monitoring for incorrect memory reuse.
 
-6. **Implement observability and cost monitoring.** Production deployment should include request tracing, LLM token usage, latency, error rates, SQL validation failures, routing accuracy, and user feedback metrics.
+6. **Add observability and cost monitoring.** Production deployment should monitor request traces, LLM token usage, latency, error rate, SQL validation failures, routing accuracy, and user feedback.
 
-7. **Extend to the full 16-agent roadmap.** The HostAgent and specialist-agent structure can be reused for RFQ automation, supplier catalogue sync, payment scheduling, financing eligibility, risk monitoring, spend analysis, and support automation.
+7. **Expand toward the 16-agent roadmap.** The HostAgent and specialist-agent structure can be reused for RFQ automation, supplier catalogue synchronisation, payment scheduling, financing eligibility, risk monitoring, spend analysis, and support automation.
 
 # Things Learned
 
-This project provided practical learning in both business analysis and technical delivery.
+This project provided practical learning in business analysis, system design, and AI engineering.
 
-From a business perspective, the project showed that invoice matching is not only a data retrieval problem. It requires understanding the relationship between invoices, purchase orders, delivery orders, suppliers, buyers, payment status, and line-level references. A seemingly simple user question such as "Does this invoice match?" must be translated into several checks: whether the invoice exists, whether line items exist, whether PO and DO references exist, whether linked records are found, and whether quantities and amounts agree.
+From a business perspective, invoice matching is not just a data retrieval problem. It requires understanding the relationships among invoices, purchase orders, delivery orders, suppliers, buyers, payment status, and line-item references. A simple question such as "Does this invoice match?" involves multiple checks: whether the invoice exists, whether line items exist, whether PO and DO references exist, whether linked records can be found, whether quantities match, whether amounts match, and whether manual review is needed.
 
-From a system design perspective, the project showed why multi-agent separation is useful. Invoice analytics, PO analytics, and DO analytics have overlapping but different data sources. Separating them into specialist agents keeps each schema context smaller and makes routing decisions explicit. At the same time, HostAgent orchestration is necessary because real business questions often span more than one domain.
+From a system design perspective, the multi-agent architecture has clear value. Invoice analysis, PO analysis, and DO analysis use different data sources and business semantics. Separating them into specialist agents keeps each schema context smaller and each responsibility clearer. At the same time, real business questions often cross domain boundaries, so HostAgent orchestration is still required for routing and result integration.
 
-From an AI engineering perspective, the project showed that LLMs are useful for flexible routing, text-to-SQL generation, summarisation, and follow-up rewriting, but deterministic code is still needed for critical business logic. Document matching should not rely only on generative output. The implemented matching utilities use explicit database fields and variance checks, which makes the result more auditable.
+From an AI engineering perspective, LLMs are useful for flexible routing, text-to-SQL, summarisation, and follow-up rewriting. However, critical business logic should not rely entirely on generated output. Document matching requires deterministic computation and clear data provenance, so the project uses explicit database fields and variance checks to make results more auditable.
 
-From a data safety perspective, the project reinforced the need for layered protection. The analytics databases are opened in read-only mode, generated SQL is validated, dangerous keywords are blocked, and row caps are applied. These safeguards are still POC-level, but they demonstrate the correct direction for production hardening.
+From a data safety perspective, the project reinforced the need for layered protection. The system uses read-only database connections, SQL validation, dangerous keyword blocking, and result row limits. These are still POC-level controls, but they show the correct direction for production hardening.
 
-From a user experience perspective, the project showed that memory and history are important for a useful business assistant. Users naturally ask follow-up questions such as "What about its PO?" or "What was the previous invoice?". The recent-turn memory and scoped long-term memory features make the assistant feel more practical and reduce the need for repetitive user input.
+From a user experience perspective, memory and conversation history are important for a useful business assistant. Users naturally ask follow-up questions such as "What about its PO?" or "What was the previous invoice status?". Recent-turn memory and scoped long-term memory make the system closer to a real business assistant and reduce repeated user input.
 
 # Problems and Solutions
 
@@ -253,33 +282,33 @@ This section describes the problems encountered during the project and the solut
 
 | Problem | Impact | Solution |
 | --- | --- | --- |
-| Ambiguous user questions | Short follow-up questions may omit the invoice, PO, or DO number. | Added recent-turn memory, follow-up rewriting, entity reference extraction, and long-term memory retrieval. |
-| Cross-domain document linkage | PO and DO agents may not have direct access to invoice tables, causing incorrect inferred links. | HostAgent enriches queries using invoice-item UUID linkage and explicitly warns agents not to infer links from plain numbers alone. |
-| LLM routing may return malformed JSON | Invalid router output could break routing. | Router normalises structured JSON and falls back to keyword routing for malformed model output. |
-| Gemini runtime or authorisation errors | Silent fallback could hide configuration issues. | Runtime and authorisation failures are surfaced as actionable configuration errors. |
-| Unsafe model-generated SQL | LLM-generated SQL could include write operations or excessive result sets. | Added SQL validation, forbidden keyword checks, read-only database sessions, and maximum row limits. |
-| Conversation turn race conditions | Concurrent requests could receive duplicate turn indexes. | Conversation turn reservation uses database transaction logic to allocate distinct turn indexes. |
-| Stale environment variables | Old shell-level values could override the intended `.env` values. | `DOXA_DOTENV_OVERRIDE=1` is used by default for local POC startup. |
-| Missing vector extension | Local PostgreSQL may not support pgvector. | Long-term memory falls back to JSONB embeddings, entity matching, and text fallback retrieval. |
-| Lack of maintainable test sources | Verification cannot be repeated easily by future developers. | Verification was recorded in `change_report.md`; the next step is to recreate proper `tests/*.py` files. |
+| Ambiguous user questions | Follow-up questions may omit invoice, PO, or DO identifiers. | Added recent-turn memory, follow-up rewriting, entity reference extraction, and long-term memory retrieval. |
+| Cross-domain document linkage can be incorrect | PO/DO agents may not directly access invoice tables and could infer relationships incorrectly. | HostAgent enriches context using invoice item UUID linkage and prevents agents from relying only on display numbers. |
+| LLM router output may be malformed | Invalid routing output can prevent request dispatch. | Router normalises JSON and falls back to keyword routing when model output is malformed. |
+| Gemini runtime or authorisation errors | Silent fallback could hide configuration problems. | Runtime and authorisation failures are returned as actionable configuration errors. |
+| Model-generated SQL can be risky | Generated SQL may include write operations, DDL, or excessive result sets. | Added SQL validation, forbidden keyword blocking, read-only database sessions, and maximum row limits. |
+| Concurrent turn indexes can collide | Concurrent requests in one conversation may produce duplicate turn indexes. | Conversation turn reservation uses database transactions to ensure unique turn indexes. |
+| Stale environment variables can override `.env` values | Runtime may use outdated Gemini keys or database settings. | Local startup uses `DOXA_DOTENV_OVERRIDE=1` by default. |
+| Local PostgreSQL may not have pgvector | Semantic retrieval may be limited. | Long-term memory falls back to JSONB embeddings, entity matching, and text matching. |
+| Maintainable test source files are missing | Future development cannot easily repeat verification. | Current verification is captured as milestone results; future work should recreate `tests/*.py`. |
 
 # Looking Back
 
-If assigned to a similar project again, the first improvement would be to define a small but complete automated test suite before adding memory and frontend features. The project made significant progress through manual and scripted verification, but source-controlled tests would make future changes safer and easier to review.
+If assigned to a similar project again, the first improvement would be to create a small but complete automated test suite before adding memory and frontend features. The project completed many manual and scripted verification steps, but source-controlled tests would make later changes safer.
 
-The second improvement would be to formalise the business glossary earlier. Terms such as pending, overdue, matched, linked, paid, delivered, received, rejected, and financed may have specific meanings inside Connex. Adding these definitions early would improve text-to-SQL accuracy and reduce ambiguity in user-facing answers.
+The second improvement would be to define a business glossary earlier. Terms such as pending, overdue, matched, linked, paid, delivered, received, rejected, and financed may have specific meanings inside Connex. Clarifying those definitions early would improve text-to-SQL accuracy and reduce ambiguity in user-facing answers.
 
-The third improvement would be to separate POC-only assumptions from production requirements more explicitly. The current code is useful for local demonstration, but production deployment will require tenant isolation, role-based access control, formal audit logging, data retention rules, monitoring, and stronger SQL safety.
+The third improvement would be to separate POC assumptions from production requirements more clearly. The current system is suitable for local demonstration, but production deployment requires tenant isolation, role-based permissions, formal audit logging, data retention policies, monitoring, and stronger SQL safety.
 
-The fourth improvement would be to create a small curated dataset for repeatable demonstrations. Realistic fixtures would allow the team to show matching pass/fail cases, missing PO or DO references, overdue invoices, supplier rankings, and follow-up memory behaviour consistently.
+The fourth improvement would be to prepare a small repeatable demonstration dataset. Realistic fixtures would make it easier to consistently demonstrate matching pass, matching failure, missing PO/DO, overdue invoices, supplier ranking, and follow-up memory scenarios.
 
 # Acknowledgement
 
-The project team would like to acknowledge Doxa Holdings International Pte Ltd. for providing the business context, project direction, and opportunity to explore AI agents for procurement, finance, and logistics workflows. The team also acknowledges the NUS-ISS Graduate Diploma in Systems Analysis programme for providing the industrial attachment structure and guidance for connecting software delivery with business analysis, system design, implementation, testing, and reflection.
+The project team would like to thank Doxa Holdings International Pte Ltd. for providing the business context, project direction, and opportunity to explore AI agents in procurement, finance, and logistics workflows. The team also thanks the NUS-ISS Graduate Diploma in Systems Analysis programme for providing the industrial attachment framework that connects business analysis, system design, implementation, testing, and reflection.
 
 # Appendix A
 
-## Phase/Workflow and Deliverables
+**Phase/Workflow and Deliverables**
 
 | Phase/Workflow | Deliverables |
 | --- | --- |
@@ -287,55 +316,55 @@ The project team would like to acknowledge Doxa Holdings International Pte Ltd. 
 | Requirement Capture Workflow | Functional requirement specification, non-functional requirement specification, UI design. |
 | Analysis Workflow | Analysis models, database structure analysis, agent responsibility model. |
 | Design Workflow | Design models, relational database design for task/session/memory store, A2A protocol design, agent orchestration design. |
-| Implementation Workflow | Source code for HostAgent, InvoiceAgent, PurchaseOrderAgent, DeliveryOrderAgent, A2A layer, SQL tool, matching tool, storage layer, CLI, and browser frontend. |
-| Test Workflow | Test case and test result summary based on compilation, schema initialisation, routing checks, memory checks, frontend syntax validation, and startup verification. |
-| Deployment Workflow | Running application through `python main.py`, local agent ports, browser frontend, and environment variable configuration. |
-| Others | README, change report, database structure reference, overall DOXA AI agent plan, and final report. |
+| Implementation Workflow | HostAgent, InvoiceAgent, PurchaseOrderAgent, DeliveryOrderAgent, A2A layer, SQL tool, matching tool, storage layer, CLI, and browser frontend code. |
+| Test Workflow | Test result summary based on compilation, schema initialisation, routing checks, memory checks, frontend syntax validation, and startup verification. |
+| Deployment Workflow | Local application execution through `python main.py`, local agent ports, browser frontend, and environment variable configuration. |
+| Others | README, change log, database structure reference, overall DOXA AI agent plan, and final report. |
 
-## Business Modelling Workflow
+**Business Modelling Workflow**
 
-### Project Plan
+**Project Plan**
 
-The POC supports the DOXA CONNEX AI agent roadmap by implementing the first functional version of the invoice analysis and matching assistant. The broader roadmap targets 16 agents over four months. This POC contributes specifically to the finance and payment domain and also creates reusable infrastructure for later agents.
+This POC supports the DOXA CONNEX AI agent roadmap by implementing the first runnable version of the invoice analysis and matching assistant. The overall roadmap targets 16 agents across four months. This POC focuses on the finance and payment domain while also creating reusable infrastructure for later agents.
 
-### Business Use Case Model Survey
+**Business Use Case Model Survey**
 
 | Use case | Primary actor | Expected outcome |
 | --- | --- | --- |
-| Ask invoice analytics question | Finance user | User receives a summary and supporting result rows. |
-| Ask supplier or buyer question | Finance or procurement user | User receives invoice totals, counts, or status breakdowns. |
-| Ask purchase order question | Procurement user | User receives PO analytics from purchase data. |
-| Ask delivery order question | Logistics or operations user | User receives DO analytics from delivery data. |
-| Check invoice against PO and DO | Finance user | User receives a cross-document matching conclusion. |
-| Ask follow-up question | Any business user | Agent resolves the reference using recent or long-term memory. |
-| Review saved conversation | Any browser user | User reopens prior chat turns from the History panel. |
+| Ask an invoice analysis question | Finance user | User receives a summary and supporting result rows. |
+| Ask supplier or buyer questions | Finance or procurement user | User receives invoice totals, counts, or status breakdowns. |
+| Ask purchase order questions | Procurement user | User receives PO analysis results. |
+| Ask delivery order questions | Logistics or operations user | User receives DO analysis results. |
+| Check invoice matching against PO/DO | Finance user | User receives a cross-document matching conclusion. |
+| Ask a follow-up question | Any business user | Agent resolves the reference using recent or long-term memory. |
+| Review conversation history | Browser user | User reopens previous turns from the History panel. |
 
-### Business Object Model Survey
+**Business Object Model Survey**
 
 | Business object | Description |
 | --- | --- |
 | Invoice | Header-level invoice record including status, amount, supplier, buyer, currency, and dates. |
-| Invoice Item | Line-level invoice record containing quantities, prices, PO references, and DO references. |
+| Invoice Item | Line-level invoice record containing quantity, price, PO reference, and DO reference. |
 | Supplier | Supplier master data used for supplier-level analysis. |
 | Buyer | Buyer master data used for buyer-level analysis. |
-| Purchase Order | Header-level PO record used for PO analytics and invoice-to-PO linkage. |
-| PO Item | Line-level PO record used for detailed comparison. |
-| Delivery Order | Header-level DO record used for delivery analytics and invoice-to-DO linkage. |
-| Delivery Order Item | Line-level DO record used for quantity coverage checks. |
-| Conversation | A sequence of user and assistant turns under one conversation ID. |
-| Long-term Memory | Scoped remembered business facts derived from completed turns. |
+| Purchase Order | PO header record used for PO analysis and invoice-to-PO linkage. |
+| PO Item | PO line record used for detailed comparison. |
+| Delivery Order | DO header record used for delivery analysis and invoice-to-DO linkage. |
+| Delivery Order Item | DO line record used for quantity coverage checks. |
+| Conversation | A set of user and assistant turns under one conversation ID. |
+| Long-term Memory | Scoped memory derived from completed business turns. |
 
-## Requirement Capture Workflow
+**Requirement Capture Workflow**
 
-### Requirement Specification (Function Requirements)
+**Requirement Specification (Function Requirements)**
 
 | ID | Functional requirement | Implementation reference |
 | --- | --- | --- |
 | FR-01 | The system shall accept natural-language business questions. | CLI and browser frontend. |
 | FR-02 | The system shall route questions to the correct specialist agent. | `agents/host_agent/router.py`, `agents/capabilities.py`. |
-| FR-03 | The system shall support invoice analytics. | `agents/invoice_agent/graph.py`. |
-| FR-04 | The system shall support purchase order analytics. | `agents/purchase_order_agent/graph.py`. |
-| FR-05 | The system shall support delivery order analytics. | `agents/delivery_order_agent/graph.py`. |
+| FR-03 | The system shall support invoice analysis. | `agents/invoice_agent/graph.py`. |
+| FR-04 | The system shall support purchase order analysis. | `agents/purchase_order_agent/graph.py`. |
+| FR-05 | The system shall support delivery order analysis. | `agents/delivery_order_agent/graph.py`. |
 | FR-06 | The system shall execute only read-only analytics SQL. | `tools/sql_query.py`. |
 | FR-07 | The system shall provide invoice-to-PO and invoice-to-DO matching utilities. | `tools/document_match_query.py`. |
 | FR-08 | The system shall store sessions, tasks, messages, artifacts, and conversation turns. | `storage/schema.sql`, `storage/task_store.py`, `storage/memory_store.py`. |
@@ -343,40 +372,40 @@ The POC supports the DOXA CONNEX AI agent roadmap by implementing the first func
 | FR-10 | The system shall support scoped long-term memory. | `agents/host_agent/long_term_memory.py`, `storage/schema.sql`. |
 | FR-11 | The system shall show saved conversations in the browser History panel. | `doxa-agent-frontend/index.html`, HostAgent conversation APIs. |
 
-### Requirement Specification (Non Functional)
+**Requirement Specification (Non Functional)**
 
 | ID | Non-functional requirement | Implementation or recommendation |
 | --- | --- | --- |
-| NFR-01 | Safety | Read-only DB sessions, SQL keyword blocking, row caps. |
+| NFR-01 | Safety | Read-only database sessions, SQL keyword blocking, row caps. |
 | NFR-02 | Traceability | Task, session, message, artifact, and memory persistence. |
-| NFR-03 | Configurability | Environment variables documented in README. |
+| NFR-03 | Configurability | Environment variable based configuration. |
 | NFR-04 | Maintainability | Modular agents, tools, storage, CLI, and frontend. |
-| NFR-05 | Usability | Natural-language chat interface and saved History panel. |
-| NFR-06 | Reliability | Startup port checks and recorded verification. |
-| NFR-07 | Scalability | POC uses local processes; future production should use managed deployment and queues. |
-| NFR-08 | Security | POC guardrails exist; production requires Connex auth, tenant isolation, and stricter SQL policy. |
+| NFR-05 | Usability | Natural-language chat interface and saved conversation History. |
+| NFR-06 | Reliability | Startup port checks and verification records. |
+| NFR-07 | Scalability | Current version is a local POC; production should use managed deployment and queues. |
+| NFR-08 | Security and compliance | POC guardrails exist; production requires Connex auth, tenant isolation, and stricter SQL policy. |
 
-### UI Design
+**UI Design**
 
-The UI design is intentionally simple for POC demonstration:
+The POC UI is intentionally simple for demonstration and validation:
 
-- A browser chat interface is served on the configured frontend port.
+- The browser chat interface runs on the configured frontend port.
 - The left panel shows conversation History.
-- A new chat creates a new conversation ID.
-- A selected history item loads saved user and assistant turns.
-- Deleting a history item removes the conversation memory records from the task-store memory tables.
-- CLI users can inspect memory with `memory` and `memory <conversation_id>`.
+- New chat creates a new conversation ID.
+- Selecting a history item loads saved user and assistant turns.
+- Deleting a history item removes the conversation records from the task-store memory tables.
+- CLI users can inspect memory using `memory` or `memory <conversation_id>`.
 
-## Analysis Workflow
+**Analysis Workflow**
 
-### Analysis Models
+**Analysis Models**
 
 The main analysis model is a routed multi-agent flow:
 
 ```text
 User question
   -> HostAgent
-  -> Recent and long-term memory retrieval
+  -> Retrieve recent and long-term memory
   -> Route decision
   -> Optional cross-document reference enrichment
   -> Specialist agent execution
@@ -386,7 +415,7 @@ User question
   -> User response
 ```
 
-The document matching analysis model uses invoice line items as the authoritative pivot:
+The document matching model uses invoice line items as the authoritative pivot:
 
 ```text
 Invoice
@@ -395,25 +424,25 @@ Invoice
       -> do_uuid -> delivery_order.uuid
 ```
 
-This avoids unsafe assumptions based only on visible document numbers.
+This model avoids inferring relationships only from visible document numbers and reduces incorrect matching risk.
 
-## Design Workflow
+**Design Workflow**
 
-### Design Models
+**Design Models**
 
 | Design area | Design decision |
 | --- | --- |
-| Agent orchestration | HostAgent is the central router and coordinator. |
-| Agent specialisation | Separate InvoiceAgent, PurchaseOrderAgent, and DeliveryOrderAgent. |
-| Data access | Read-only PostgreSQL connections for business data. |
-| AI use | Gemini for routing, SQL generation, summarisation, embeddings, and follow-up rewriting. |
-| Deterministic logic | Matching utilities for invoice-to-PO and invoice-to-DO checks. |
-| Persistence | PostgreSQL `invoice_poc_*` tables for sessions, tasks, messages, artifacts, conversations, turns, and memories. |
-| Frontend | Lightweight browser chat with local memory scope and History panel. |
+| Agent orchestration | HostAgent acts as the central router and coordinator. |
+| Agent specialisation | InvoiceAgent, PurchaseOrderAgent, and DeliveryOrderAgent are separated. |
+| Data access | Business data is accessed through read-only PostgreSQL connections. |
+| AI use | Gemini is used for routing, SQL generation, summarisation, embeddings, and follow-up rewriting. |
+| Deterministic logic | Matching utilities perform invoice-to-PO and invoice-to-DO checks. |
+| Persistence | PostgreSQL `invoice_poc_*` tables store sessions, tasks, messages, artifacts, conversation turns, and memories. |
+| Frontend | Lightweight browser chat UI with local memory scope and History panel. |
 
-### Relational DB Design
+**Relational DB Design**
 
-The POC does not modify source invoice or purchase data. It creates task and memory tables in the configured task database:
+The POC does not modify source invoice or purchase data. The system creates the following tables in the configured task database:
 
 - `invoice_poc_conversations`
 - `invoice_poc_sessions`
@@ -423,11 +452,11 @@ The POC does not modify source invoice or purchase data. It creates task and mem
 - `invoice_poc_conversation_turns`
 - `invoice_poc_long_term_memories`
 
-These tables support traceability, recent-turn memory, long-term memory, and frontend History.
+These tables support traceability, recent-turn memory, long-term memory, and browser History.
 
-## Implementation Workflow
+**Implementation Workflow**
 
-### Code
+**Code**
 
 The main implementation files are:
 
@@ -453,24 +482,24 @@ The main implementation files are:
 - `cli/chat.py`
 - `doxa-agent-frontend/index.html`
 
-## Test Workflow
+**Test Workflow**
 
-### Test Case and Test Result
+**Test Case and Test Result**
 
 | Test area | Result summary |
 | --- | --- |
-| Python compilation | Key modules compiled successfully according to `change_report.md`. |
-| Database initialisation | `init_db()` successfully applied schemas during verification. |
-| Router behaviour | Malformed Gemini routing JSON falls back to keyword routing; critical Gemini configuration errors are surfaced. |
-| Conversation turn allocation | Concurrent turn allocation produced distinct turn indexes during local threaded verification. |
-| Follow-up rewriting | Query rewrite checks confirmed correct handling of references such as "What about its PO?". |
+| Python compilation | Key modules compiled successfully. |
+| Database initialisation | `init_db()` successfully applied schema during verification. |
+| Routing behaviour | Malformed Gemini routing JSON falls back safely; critical configuration errors are surfaced. |
+| Conversation turn allocation | Local concurrency verification confirmed that turn indexes are not duplicated. |
+| Follow-up rewriting | Questions such as "What about its PO?" are rewritten correctly. |
 | Frontend syntax | Inline JavaScript syntax validation passed. |
-| Startup | `python main.py` reached CLI and started local agents/frontend after stale processes were stopped. |
-| Long-term memory | Schema and fallback retrieval were verified; pgvector absence did not block functionality. |
+| Startup verification | `python main.py` can enter CLI and start local agents/frontend after stale processes are stopped. |
+| Long-term memory | Schema and fallback retrieval were verified; missing pgvector does not block functionality. |
 
-## Deployment Workflow
+**Deployment Workflow**
 
-### Running application
+**Running application**
 
 The local POC is run with:
 
@@ -478,7 +507,7 @@ The local POC is run with:
 python main.py
 ```
 
-The default local services are:
+Default local services are:
 
 | Service | Default URL |
 | --- | --- |
@@ -488,54 +517,52 @@ The default local services are:
 | DeliveryOrderAgent | `http://127.0.0.1:10003` |
 | Browser frontend | `http://127.0.0.1:8080` |
 
-The required configuration includes PostgreSQL connection details and `GEMINI_API_KEY`.
+Required configuration includes PostgreSQL connection parameters and `GEMINI_API_KEY`.
 
-## Others
+**Others**
 
-Other deliverables unique to the project include:
+Other project-specific deliverables include:
 
-- `README.md` for setup, architecture, safety model, and limitations.
-- `overall_plan.md` for the broader DOXA CONNEX AI agent strategy.
-- `database_structure.md` for source database reference.
-- `change_report.md` for implementation and verification history.
+- README: setup, architecture, safety model, and limitations.
+- Overall plan document: DOXA CONNEX AI agent strategy.
+- Database structure reference: source database structure.
+- Change log: implementation and verification history.
 
 # Appendix B
 
-## Progress Reports and Project Plans/Schedules
+**Progress Reports - Attach all 20 weekly progress reports, Project Plans/Schedules**
 
-The attachment guideline refers to 20 weekly progress reports. The available repository contains implementation change reports for several key milestones rather than 20 separate weekly reports. The table below adapts the required progress-report appendix to the POC evidence available in the repository and the broader four-month project schedule.
+The actual weekly report scope is Week 1 to Week 18. The following progress summary reflects the most important task in each week and does not add tasks for dates without actual recorded work.
 
-| Week | Progress summary | Deliverable or evidence |
+| Week | Date range | Progress summary | Deliverable |
+| --- | --- | --- | --- |
+| Week 1 | 2026-03-02 to 2026-03-06 | Set up the environment and validated Gemini, Anthropic, Chain, RAG, and tool-using Agent prototypes. | LLM validation, Chain/RAG/Agent prototypes. |
+| Week 2 | 2026-03-09 to 2026-03-13 | Reviewed Prompt, structured output, RAG, multi-model integration, and the 16-agent management plan. | Core capability review, deliverables list, interview template, Agent board draft. |
+| Week 3 | 2026-03-13 to 2026-03-19 | Implemented production-style RAG with CSV loading, embeddings, vector persistence, and continuous conversation. | RAG ingestion and retrieval flow, session entry, exception handling, fallback mechanism. |
+| Week 4 | 2026-03-20 to 2026-03-26 | Analysed Procure-to-Pay, subcontractor processes, business roles, core scenarios, and Agent boundaries. | Workflow understanding, Concierge/specialist Agent collaboration model, task split. |
+| Week 5 | 2026-03-27 to 2026-04-02 | Deepened business and database analysis and refined RFQ, PO, receiving, invoice matching, and payment scheduling requirements. | Procurement requirements, single-responsibility Agent plan, infrastructure sequence. |
+| Week 6 | 2026-04-03 to 2026-04-09 | Validated the procure-to-pay loop and designed the Doxa Connex multi-agent architecture, security boundary, and implementation route. | Multi-agent architecture, technology choices, JWT/RBAC design, four-phase route. |
+| Week 7 | 2026-04-10 to 2026-04-16 | Defined the A2A POC scenario and planned local implementation using LangChain, LangGraph, and A2A. | A2A POC business design, architecture review, security design updates. |
+| Week 8 | 2026-04-17 to 2026-04-23 | Froze A2A POC architecture and completed protocol structures, orchestration, mock queries, state tables, and end-to-end validation. | A2A structures, Orchestrator/child Agents, state tables, local validation. |
+| Week 9 | 2026-04-24 to 2026-04-30 | Progressed ECS Fargate, Cloud Map, API Gateway, Lambda Authorizer, NLB, and Aurora preparation. | Infrastructure preparation, call-chain design, API samples, blocker summary. |
+| Week 10 | 2026-05-01 to 2026-05-07 | Scoped the AML A2A POC and designed the Host, Market, and Transaction three-agent model. | AML scope, technology choices, LangGraph dispatch loop, risk report demo flow. |
+| Week 11 | 2026-05-08 to 2026-05-14 | Completed AML multi-agent specifications, AgentCards, A2A messages, state transitions, and shifted to invoice data. | Executable specifications, validation plan, sample data, invoice data direction. |
+| Week 12 | 2026-05-18 to 2026-05-22 | Started Invoice Analysis POC, analysed PostgreSQL structure, and implemented task/session store and Host/Invoice A2A loop. | Database analysis, task/session storage, three invoice queries, CLI. |
+| Week 13 | 2026-05-25 to 2026-05-29 | Completed natural-language-to-SQL-to-summary flow and added read-only execution and forbidden keyword blocking. | End-to-end text-to-SQL, safe SQL execution, four demo queries. |
+| Week 14 | 2026-06-01 to 2026-06-05 | Prepared Invoice Agent demo, reviewed invoice workflow and multi-role views, and selected PO/DO as the next focus. | Complex query demo, workflow review, multi-role requirements, PO/DO plan. |
+| Week 15 | 2026-06-08 to 2026-06-12 | Added PO/DO agents and implemented Invoice-to-PO/DO matching, two-way/three-way orchestration, and batch matching. | PO/DO analysis, deterministic matching, batch matching, 15 regression tests. |
+| Week 16 | 2026-06-15 to 2026-06-19 | Fixed CLI rendering, standardised Router JSON, improved Top-N summaries, matching routing, and PO-to-DO context. | Stable CLI output, Router contract, matching result calibration, stability closure. |
+| Week 17 | 2026-06-22 to 2026-06-28 | Built the browser frontend, connected SSE streaming, implemented Live/Demo modes, result rendering, and CORS hardening. | Browser chat UI, SSE communication, table/SQL/error rendering, frontend config. |
+| Week 18 | 2026-06-29 to 2026-07-06 | Implemented multi-turn memory, recent context, History, memory_scope_id, long-term memory, and concurrency verification. | Conversation/turn tables, follow-up rewriting, History, memory isolation, long-term memory. |
+
+**Project Plans/Schedules**
+
+This POC can be viewed as the foundation for Invoice Matching Agent v1 in the broader roadmap:
+
+| Month | Overall programme focus | Relationship to this POC |
 | --- | --- | --- |
-| 1 | Reviewed overall DOXA CONNEX AI agent plan and identified invoice matching as a finance and payment priority. | `overall_plan.md`. |
-| 2 | Studied invoice, PO, DO, supplier, buyer, and task-store database structures. | `database_structure.md`. |
-| 3 | Defined POC scope and natural-language query examples. | `README.md`. |
-| 4 | Designed multi-agent architecture with HostAgent and specialist agents. | `README.md`, `agents/capabilities.py`. |
-| 5 | Implemented A2A protocol layer and local agent service structure. | `a2a/`, `agents/*/server.py`. |
-| 6 | Implemented InvoiceAgent text-to-SQL analytics. | `agents/invoice_agent/graph.py`. |
-| 7 | Implemented PurchaseOrderAgent and DeliveryOrderAgent analytics. | `agents/purchase_order_agent/graph.py`, `agents/delivery_order_agent/graph.py`. |
-| 8 | Implemented SQL safety checks and read-only query execution. | `tools/sql_query.py`. |
-| 9 | Implemented deterministic invoice-to-PO and invoice-to-DO matching utilities. | `tools/document_match_query.py`. |
-| 10 | Implemented HostAgent routing and multi-agent response composition. | `agents/host_agent/graph.py`, `agents/host_agent/router.py`. |
-| 11 | Added task and session persistence. | `storage/schema.sql`, `storage/task_store.py`. |
-| 12 | Added recent-turn conversation memory MVP. | `change_report.md` dated 2026-07-02. |
-| 13 | Hardened conversation memory and added frontend History. | `change_report.md` dated 2026-07-03. |
-| 14 | Added scoped long-term memory and memory APIs. | `change_report.md` dated 2026-07-06. |
-| 15 | Updated README, environment handling, and runtime configuration notes. | `README.md`, `.env.example` references. |
-| 16 | Verified startup, route registration, schema initialisation, and memory behaviours. | `change_report.md`. |
-| 17 | Prepared final report structure according to the industrial attachment report requirement. | `Final_Report.md`. |
-| 18 | Recommended automated test restoration and production security hardening. | Recommendations section. |
-| 19 | Recommended Connex integration, document AI extraction, and human-in-loop workflow. | Recommendations section. |
-| 20 | Recommended expansion path from this POC to the wider 16-agent roadmap. | Recommendations section and `overall_plan.md`. |
-
-## Project Plans/Schedules
-
-The POC should be viewed as the foundation for the Invoice Matching Agent v1 in the broader roadmap:
-
-| Month | Planned focus from overall programme | Relationship to this POC |
-| --- | --- | --- |
-| Month 1 | Discovery, stakeholder interviews, workflow mapping, use-case prioritisation. | POC uses the invoice matching priority and business workflow assumptions. |
-| Month 2 | BRD, UX design, agent architecture, API specification, security review. | POC implements initial architecture and frontend flow but does not replace formal BRD/security review. |
-| Month 3 | Agile development of high/medium priority agents, including Invoice Matching Agent v1. | POC implements the local first version of invoice analysis and matching capability. |
-| Month 4 | UAT, performance testing, training, phased production rollout. | POC provides a basis for UAT planning but still requires production hardening. |
+| Month 1 | Discovery: stakeholder interviews, workflow mapping, and use-case prioritisation. | The POC uses invoice matching priority and business workflow assumptions as input. |
+| Month 2 | Design: BRD, UX design, agent architecture, API specification, and security review. | The POC implements the initial architecture and frontend interaction but does not replace formal BRD and security review. |
+| Month 3 | Development: high and medium priority agents, including Invoice Matching Agent v1. | The POC implements the first local version of invoice analysis and matching capability. |
+| Month 4 | UAT, performance testing, training, and phased production rollout. | The POC provides a basis for UAT planning but still requires production hardening. |
 
