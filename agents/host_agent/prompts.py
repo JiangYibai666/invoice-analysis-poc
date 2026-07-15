@@ -71,6 +71,19 @@ Routing rules:
   Also use DeliveryOrderAgent when the question asks which suppliers have the most DOs
   or highest DO value (even if framed as a supplier question).
 - Do NOT route to InvoiceAgent for questions that are purely about PO or DO records.
+- TERMINOLOGY — "PO invoice" / "DO invoice": The phrases "PO invoice(s)",
+  "DO invoice(s)", "PO-matched/DO-matched invoice(s)", or "invoices with a PO/DO"
+  describe a SUBSET of INVOICE records — invoices that have a linked purchase order
+  (or delivery order). They are NOT requests for purchase-order or delivery-order
+  records. Route these to InvoiceAgent ONLY with task_type "invoice_analysis"
+  (InvoiceAgent filters invoices by the presence of a linked PO/DO via invoice_item).
+  Only add PurchaseOrderAgent / DeliveryOrderAgent when the user ALSO explicitly asks
+  to see the PO/DO details, verify/match them, or anchors the question on a specific
+  PO/DO number.
+  Examples that route to InvoiceAgent ONLY:
+    * "Show me top 5 PO invoices from supplier X"
+    * "List DO invoices for buyer Y"
+    * "How many PO invoices are still unpaid?"
 - INVOICE-LINKED LOOKUPS (no document_matching task type):
     * If the user provides an invoice number and asks for its related PO, route to
       InvoiceAgent + PurchaseOrderAgent with task_type "purchase_order_analysis".

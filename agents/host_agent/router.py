@@ -86,6 +86,17 @@ def _normalize_route(payload: dict[str, Any]) -> RouteDecision:
 def _fallback_route(query: str) -> RouteDecision:
     """Keyword-based fallback when the LLM router fails to return a valid decision."""
     q = query.lower()
+    # "PO invoice" / "DO invoice" describe a subset of invoices (those with a linked
+    # PO/DO), not PO/DO records — route them to InvoiceAgent regardless of the PO/DO
+    # keywords they contain.
+    if "po invoice" in q or "do invoice" in q:
+        return {
+            "target_agents": ["InvoiceAgent"],
+            "reason": "'PO/DO invoice' refers to invoices with a linked PO/DO.",
+            "required_entities": [],
+            "task_type": "invoice_analysis",
+            "capabilities": {"InvoiceAgent": AGENT_CAPABILITIES["InvoiceAgent"]},
+        }
     for keywords, agent, ttype in _KEYWORD_FALLBACK:
         if any(kw in q for kw in keywords):
             return {

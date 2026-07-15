@@ -145,6 +145,23 @@ Rules:
   buyers or suppliers; `invoice_global_no` is unique system-wide and avoids confusion.
   Include `invoice_no` as a secondary column only when it adds useful context.
 - Use ILIKE for case-insensitive text filters.
+- SUPPLIER vs BUYER — map the company role to the correct table/column. A company can
+  act as either party, so the word the user uses decides which column to filter:
+    * "from supplier X", "supplier X", "sold by X", "vendor X", "issued by X"
+        → filter public.supplier_information.company_name (s.company_name)
+    * "for buyer X", "buyer X", "issued to X", "billed to X", "bought by X",
+      "customer X" → filter public.buyer_information.company_name (b.company_name)
+  Never filter the buyer column when the user said "supplier" (or vice versa). If the
+  role is genuinely unspecified, default to the supplier.
+- TERMINOLOGY — "PO invoice" / "DO invoice": A "PO invoice" (or "PO-matched invoice",
+  "invoice with a PO") means an invoice that has at least one linked purchase order,
+  i.e. an invoice_item row with po_uuid IS NOT NULL. A "DO invoice" means an invoice
+  with at least one invoice_item row where do_uuid IS NOT NULL. Filter these with an
+  EXISTS subquery on invoice_item, e.g.:
+    WHERE EXISTS (SELECT 1 FROM public.invoice_item ii
+                  WHERE ii.invoice_id = i.id AND ii.po_uuid IS NOT NULL)
+  (use ii.do_uuid IS NOT NULL for "DO invoice"). These are still invoice queries —
+  do NOT join to purchase_order / delivery_order tables just to satisfy the phrase.
 - For "pending" or "outstanding" invoices use:
     invoice_status NOT IN ('PAID','COMPLETED','REJECTED','CANCELLED','VOID','FAILED')
 - When counting days pending use a CASE expression:
